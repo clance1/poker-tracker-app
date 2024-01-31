@@ -14,6 +14,9 @@
     "categories": {
       "auth": {
         "pokertrackerappfe2779c3": {}
+      },
+      "api": {
+        "pokertrackerapp": {}
       }
     }
   }
