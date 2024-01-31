@@ -1,0 +1,20 @@
+{
+  "staging": {
+    "awscloudformation": {
+      "AuthRoleName": "amplify-amplify37a6f45f9ada4-staging-01951-authRole",
+      "UnauthRoleArn": "arn:aws:iam::746404427445:role/amplify-amplify37a6f45f9ada4-staging-01951-unauthRole",
+      "AuthRoleArn": "arn:aws:iam::746404427445:role/amplify-amplify37a6f45f9ada4-staging-01951-authRole",
+      "Region": "us-east-1",
+      "DeploymentBucketName": "amplify-amplify37a6f45f9ada4-staging-01951-deployment",
+      "UnauthRoleName": "amplify-amplify37a6f45f9ada4-staging-01951-unauthRole",
+      "StackName": "amplify-amplify37a6f45f9ada4-staging-01951",
+      "StackId": "arn:aws:cloudformation:us-east-1:746404427445:stack/amplify-amplify37a6f45f9ada4-staging-01951/736f3460-bfce-11ee-945c-0a237a3ab2d9",
+      "AmplifyAppId": "d2y3idn2toofx6"
+    },
+    "categories": {
+      "auth": {
+        "pokertrackerappfe2779c3": {}
+      }
+    }
+  }
+}
