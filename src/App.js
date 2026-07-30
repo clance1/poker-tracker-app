@@ -508,9 +508,12 @@ const chartTooltipStyle = {
 
 // --- Leaderboard ---
 function Leaderboard({ players }) {
+  const [view, setView] = useState("game");
   const [gameFilter, setGameFilter] = useState(5);
   const [activeChart, setActiveChart] = useState("bar");
   const [hiddenPlayers, setHiddenPlayers] = useState(new Set());
+  const [achCounts, setAchCounts] = useState({});
+  const [otherSort, setOtherSort] = useState({ key: "xp", dir: "desc" });
 
   const allGames = useMemo(() => {
     const map = {};
@@ -557,6 +560,43 @@ function Leaderboard({ players }) {
       .sort((a, b) => b.net - a.net);
   }, [players, filteredIds]);
 
+  useEffect(() => {
+    if (view !== "other") return;
+    apiFetch("/api/achievements/counts").then((rows) => {
+      const map = {};
+      rows.forEach((r) => { map[r.userId] = r.achievementCount; });
+      setAchCounts(map);
+    }).catch(() => {});
+  }, [view]);
+
+  const otherStats = useMemo(() => {
+    return players
+      .filter((p) => p.userId)
+      .map((p, ci) => ({
+        id: p.id,
+        userId: p.userId,
+        name: p.name,
+        avatarPath: p.avatarPath ?? null,
+        color: PLAYER_COLORS[ci % PLAYER_COLORS.length],
+        xp: p.xp ?? 0,
+        achievementCount: achCounts[p.userId] ?? 0,
+        gamesPlayed: (p.games?.items ?? []).filter((gp) => gp.game?.isComplete).length,
+      }));
+  }, [players, achCounts]);
+
+  const sortedOtherStats = useMemo(() => {
+    const mul = otherSort.dir === "asc" ? 1 : -1;
+    return [...otherStats].sort((a, b) => mul * (a[otherSort.key] - b[otherSort.key]));
+  }, [otherStats, otherSort]);
+
+  const cycleOtherSort = (key) => {
+    setOtherSort((prev) =>
+      prev.key === key
+        ? { key, dir: prev.dir === "desc" ? "asc" : "desc" }
+        : { key, dir: "desc" }
+    );
+  };
+
   const togglePlayer = (id) =>
     setHiddenPlayers((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
@@ -590,13 +630,15 @@ function Leaderboard({ players }) {
 
   const medals = ["🥇", "🥈", "🥉"];
 
-  if (players.length === 0)
-    return <div className="empty-state"><div className="empty-icon">♠</div><p>No players yet. Add some in the Players tab.</p></div>;
-  if (allGames.length === 0)
-    return <div className="empty-state"><div className="empty-icon">♣</div><p>No completed games yet.</p></div>;
-
   return (
     <div className="lb-v2">
+      {/* Game / Other toggle */}
+      <div className="lb-view-toggle">
+        <button className={"lb-view-btn" + (view === "game" ? " active" : "")} onClick={() => setView("game")}>Game</button>
+        <button className={"lb-view-btn" + (view === "other" ? " active" : "")} onClick={() => setView("other")}>Other</button>
+      </div>
+
+      {view === "game" && (
       <div className="lb-controls">
         <span className="lb-filter-label">Period</span>
         {[5, 10, 20, "all"].map((f) => (
@@ -605,7 +647,16 @@ function Leaderboard({ players }) {
           </button>
         ))}
       </div>
+      )}
 
+      {view === "game" && players.length === 0 && (
+        <div className="empty-state"><div className="empty-icon">♠</div><p>No players yet. Add some in the Players tab.</p></div>
+      )}
+      {view === "game" && players.length > 0 && allGames.length === 0 && (
+        <div className="empty-state"><div className="empty-icon">♣</div><p>No completed games yet.</p></div>
+      )}
+
+      {view === "game" && players.length > 0 && allGames.length > 0 && <>
       <div className="lb-summary-strip">
         {[
           { val: filteredGames.length, label: gameFilter === "all" ? "Total Games" : "Games Shown" },
@@ -721,6 +772,61 @@ function Leaderboard({ players }) {
               </ResponsiveContainer>
             )}
           </div>
+        </div>
+      )}
+      </>}
+
+      {view === "other" && (
+        <div className="lb-other">
+          <div className="lb-other-header">
+            <span className="lb-other-col-label" style={{ flex: 1 }}>Player</span>
+            {[
+              { key: "xp", label: "XP" },
+              { key: "achievementCount", label: "Achievements" },
+              { key: "gamesPlayed", label: "Games" },
+            ].map(({ key, label }) => (
+              <button key={key}
+                className={"lb-other-sort-btn" + (otherSort.key === key ? " active" : "")}
+                onClick={() => cycleOtherSort(key)}>
+                {label}
+                {otherSort.key === key
+                  ? (otherSort.dir === "desc" ? " ↓" : " ↑")
+                  : " ↕"}
+              </button>
+            ))}
+          </div>
+          {sortedOtherStats.map((p, i) => {
+            const maxVal = sortedOtherStats.reduce((m, r) => Math.max(m, r[otherSort.key]), 1);
+            return (
+              <div key={p.id} className={"lb-other-row" + (i === 0 ? " leader" : "")} style={{ borderLeftColor: p.color }}>
+                <div className="lb-other-rank">
+                  {["🥇","🥈","🥉"][i] ?? <span className="lb-rank-num">#{i+1}</span>}
+                </div>
+                <div className="lb-other-identity">
+                  <Avatar src={p.avatarPath} name={p.name} size={28} />
+                  <span className="lb-card-name">{p.name}</span>
+                </div>
+                <div className="lb-other-xp">
+                  <span className="lb-xp-value">⚡ {p.xp.toLocaleString()}</span>
+                  <div className="lb-xp-bar-bg">
+                    <div className="lb-xp-bar-fill"
+                      style={{ width: Math.round((p[otherSort.key] / maxVal) * 100) + "%", background: p.color }} />
+                  </div>
+                </div>
+                <div className="lb-other-ach">
+                  <span className="lb-ach-badge">🏆 {p.achievementCount}</span>
+                </div>
+                <div className="lb-other-games">
+                  <span className="lb-games-count">{p.gamesPlayed}</span>
+                </div>
+              </div>
+            );
+          })}
+          {sortedOtherStats.length === 0 && (
+            <div className="empty-state" style={{ padding: "40px 0" }}>
+              <p>No linked player accounts yet.</p>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2737,7 +2843,7 @@ function getTier(timesEarned) {
   return TIER_CONFIG.find(t => timesEarned >= t.min) ?? null;
 }
 
-function JokerCard({ achievement, earned, earnedAt, timesEarned = 1, isAdmin, onEdit }) {
+function JokerCard({ achievement, earned, earnedAt, timesEarned = 1, isAdmin, onEdit, onPreviewToast }) {
   const SUIT_COLORS = ["#d4af37", "#a855f7", "#3fb950", "#58a6ff", "#f97316"];
   const colorIdx = achievement.name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % SUIT_COLORS.length;
   const accentColor = SUIT_COLORS[colorIdx];
@@ -2757,11 +2863,18 @@ function JokerCard({ achievement, earned, earnedAt, timesEarned = 1, isAdmin, on
         </div>
       )}
       {isAdmin && (
-        <button
-          className="joker-edit-btn"
-          title="Edit achievement"
-          onClick={(e) => { e.stopPropagation(); onEdit(achievement); }}
-        >✎</button>
+        <div className="joker-admin-btns">
+          <button
+            className="joker-edit-btn"
+            title="Edit achievement"
+            onClick={(e) => { e.stopPropagation(); onEdit(achievement); }}
+          >✎</button>
+          <button
+            className="joker-preview-btn"
+            title="Preview earned toast"
+            onClick={(e) => { e.stopPropagation(); onPreviewToast(achievement); }}
+          >▶</button>
+        </div>
       )}
       <div className="joker-card-header" style={{ borderColor: accentColor }}>
         <span className="joker-card-label" style={{ color: accentColor }}>JOKER</span>
@@ -2843,8 +2956,10 @@ function CriteriaEditor({ value, onChange }) {
   const setScope = (scope) => {
     if (scope === 'game') {
       onChange({ scope: 'game', conditions: criteria.conditions?.length ? criteria.conditions : [{ ...DEFAULT_CONDITION }] });
-    } else {
+    } else if (scope === 'streak') {
       onChange({ scope: 'streak', streakLength: criteria.streakLength ?? 3, streakCondition: criteria.streakCondition ?? 'profit' });
+    } else {
+      onChange({ scope: 'profile', trigger: criteria.trigger ?? 'profile_created' });
     }
   };
 
@@ -2871,6 +2986,7 @@ function CriteriaEditor({ value, onChange }) {
           onChange={(e) => setScope(e.target.value)}>
           <option value="game">Game — evaluated when a game completes</option>
           <option value="streak">Streak — consecutive games</option>
+          <option value="profile">Profile — awarded on profile actions</option>
         </select>
       </div>
 
@@ -2957,6 +3073,18 @@ function CriteriaEditor({ value, onChange }) {
         </div>
       )}
 
+      {criteria.scope === 'profile' && (
+        <div className="criteria-streak-row">
+          <label className="criteria-label">Trigger</label>
+          <select className="input criteria-select"
+            value={criteria.trigger ?? 'profile_created'}
+            onChange={(e) => onChange({ ...criteria, trigger: e.target.value })}>
+            <option value="profile_created">Account created</option>
+            <option value="profile_avatar">Profile picture uploaded</option>
+          </select>
+        </div>
+      )}
+
       {/* Human-readable summary */}
       {criteria.scope === 'game' && criteria.conditions?.length > 0 && (
         <div className="criteria-summary">
@@ -2973,12 +3101,19 @@ function CriteriaEditor({ value, onChange }) {
           <span>Win <strong>{criteria.streakLength ?? 3}</strong> consecutive games where net profit {criteria.streakCondition === 'profit' ? '> 0' : '< 0'}</span>
         </div>
       )}
+      {criteria.scope === 'profile' && (
+        <div className="criteria-summary">
+          <span>Awarded once when: <strong>
+            {criteria.trigger === 'profile_avatar' ? 'user uploads a profile picture' : 'user creates their account'}
+          </strong></span>
+        </div>
+      )}
     </div>
   );
 }
 
 // --- Direct image upload + framing controls ---
-function DirectImageUpload({ achievementId, currentSrc, frame, uploading, setUploading, onUploaded, onFrameChange }) {
+function DirectImageUpload({ achievementId, currentSrc, frame, uploading, setUploading, onUploaded, onFrameChange, previewName, previewDesc, accentColor }) {
   const fileRef = useRef(null);
   const [error, setError] = useState("");
 
@@ -3023,14 +3158,38 @@ function DirectImageUpload({ achievementId, currentSrc, frame, uploading, setUpl
       {error && <p className="error-msg" style={{ marginTop: 6 }}>{error}</p>}
       {isUrlImage && (
         <div className="framer-section">
-          <ImageFramer src={currentSrc} frame={frame} onChange={onFrameChange} />
-          <button
-            className="btn btn-ghost btn-sm"
-            style={{ marginTop: 8, alignSelf: "flex-start" }}
-            onClick={() => onFrameChange({ x: 0, y: 0, scale: 1 })}
-          >
-            Reset framing
-          </button>
+          <div className="framer-with-preview">
+            <div className="framer-editor-col">
+              <ImageFramer src={currentSrc} frame={frame} onChange={onFrameChange} />
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ marginTop: 8, alignSelf: "flex-start" }}
+                onClick={() => onFrameChange({ x: 0, y: 0, scale: 1 })}
+              >
+                Reset framing
+              </button>
+            </div>
+            <div className="framer-preview-col">
+              <div className="framer-preview-label">Card Preview</div>
+              <div className="framer-preview-card joker-achievement-card joker-earned"
+                style={{ borderColor: accentColor || "#d4af37" }}>
+                <div className="joker-card-header" style={{ borderColor: accentColor || "#d4af37" }}>
+                  <span className="joker-card-label" style={{ color: accentColor || "#d4af37" }}>JOKER</span>
+                </div>
+                <div className="joker-image-area">
+                  <AchievementImage src={currentSrc} imageFrame={JSON.stringify(frame)} />
+                </div>
+                <div className="joker-card-footer">
+                  <div className="joker-achievement-name">{previewName || "—"}</div>
+                  {previewDesc && (
+                    <div className="joker-achievement-desc" style={{ WebkitLineClamp: 2, overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical" }}>
+                      {previewDesc}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -3338,6 +3497,9 @@ function EditAchievementModal({ achievement, onClose, onSaved }) {
                 setPreviewFrame(parseFrame(imageFrame));
               }}
               onFrameChange={setPreviewFrame}
+              previewName={name}
+              previewDesc={description}
+              accentColor={accentColor}
             />
           </div>
 
@@ -3582,8 +3744,112 @@ function ApproveRecModal({ rec, onClose, onApproved }) {
   );
 }
 
+// --- Achievement Toast Notification ---
+function AchievementToast({ achievements, onDismiss, onViewAll }) {
+  const [visible, setVisible] = useState(false);
+  const [idx, setIdx] = useState(0);
+  const [animDir, setAnimDir] = useState(null); // 'next' | 'prev'
+
+  useEffect(() => {
+    const t = setTimeout(() => setVisible(true), 30);
+    return () => clearTimeout(t);
+  }, []);
+
+  const dismiss = () => {
+    setVisible(false);
+    setTimeout(onDismiss, 350);
+  };
+
+  const goToAchievements = () => {
+    setVisible(false);
+    setTimeout(() => { onDismiss(); onViewAll(); }, 350);
+  };
+
+  const navigate = (dir) => {
+    const next = dir === "next" ? Math.min(idx + 1, achievements.length - 1) : Math.max(idx - 1, 0);
+    if (next === idx) return;
+    setAnimDir(dir);
+    setIdx(next);
+    setTimeout(() => setAnimDir(null), 320);
+  };
+
+  const achievement = achievements[idx] ?? achievements[0];
+  const total = achievements.length;
+
+  return (
+    <div className={"achievement-toast-overlay" + (visible ? " visible" : "")} onClick={dismiss}>
+      <div className="achievement-toast-card" onClick={(e) => e.stopPropagation()}>
+        {/* Sparkle particles */}
+        {[...Array(8)].map((_, i) => (
+          <div key={i} className={`ach-sparkle ach-sparkle-${i + 1}`} />
+        ))}
+
+        <button className="achievement-toast-close" onClick={dismiss} aria-label="Close">✕</button>
+
+        <div className="achievement-toast-header">
+          <span className="achievement-toast-crown">🏆</span>
+          <span className="achievement-toast-title">
+            {total > 1 ? `${total} Achievements Unlocked!` : "Achievement Unlocked!"}
+          </span>
+        </div>
+
+        {/* Carousel */}
+        <div className="achievement-toast-carousel">
+          {total > 1 && (
+            <button className="ach-nav-btn ach-nav-prev" onClick={() => navigate("prev")} disabled={idx === 0}>‹</button>
+          )}
+
+          <div key={idx} className={"achievement-toast-joker-wrap" + (animDir ? ` slide-${animDir}` : "")}>
+            <JokerCard
+              achievement={{
+                id: achievement.achievementId,
+                name: achievement.name,
+                description: achievement.description,
+                imageSvg: achievement.imageSvg,
+                imageFrame: achievement.imageFrame,
+                xpValue: achievement.xpValue,
+              }}
+              earned={true}
+              earnedAt={achievement.earnedAt}
+              timesEarned={achievement.count ?? 1}
+              isAdmin={false}
+              onEdit={() => {}}
+              onPreviewToast={() => {}}
+            />
+          </div>
+
+          {total > 1 && (
+            <button className="ach-nav-btn ach-nav-next" onClick={() => navigate("next")} disabled={idx === total - 1}>›</button>
+          )}
+        </div>
+
+        {/* Dot indicators */}
+        {total > 1 && (
+          <div className="achievement-toast-dots">
+            {achievements.map((_, i) => (
+              <button key={i} className={"ach-dot" + (i === idx ? " active" : "")}
+                onClick={() => { setAnimDir(i > idx ? "next" : "prev"); setIdx(i); setTimeout(() => setAnimDir(null), 320); }} />
+            ))}
+          </div>
+        )}
+
+        <div className="achievement-toast-name">{achievement.name}</div>
+        <div className="achievement-toast-desc">{achievement.description}</div>
+        {achievement.xpValue > 0 && (
+          <div className="achievement-toast-xp">+{achievement.xpValue} XP</div>
+        )}
+
+        <div className="achievement-toast-actions">
+          <button className="btn btn-ghost btn-sm" onClick={dismiss}>Got it</button>
+          <button className="btn btn-primary btn-sm" onClick={goToAchievements}>View Achievements</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Achievements Tab ---
-function AchievementsTab({ isAdmin }) {
+function AchievementsTab({ isAdmin, onPreviewToast }) {
   const [achievements, setAchievements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -3667,6 +3933,7 @@ function AchievementsTab({ isAdmin }) {
                 timesEarned={a.timesEarned ?? 1}
                 isAdmin={isAdmin}
                 onEdit={setEditTarget}
+                onPreviewToast={onPreviewToast}
               />
             ))}
           </div>
@@ -3686,6 +3953,7 @@ function AchievementsTab({ isAdmin }) {
                 earnedAt={null}
                 isAdmin={isAdmin}
                 onEdit={setEditTarget}
+                onPreviewToast={onPreviewToast}
               />
             ))}
           </div>
@@ -3857,6 +4125,26 @@ function App() {
   const isAdmin = roleIsAdmin(currentRole);
   const isOwner = roleIsOwner(currentRole);
 
+  const [toastQueue, setToastQueue] = useState([]);
+
+  const pollUnseen = useCallback(async () => {
+    try {
+      const rows = await apiFetch("/api/achievements/unseen");
+      if (rows.length > 0) setToastQueue((q) => [...q, ...rows]);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    pollUnseen();
+    const id = setInterval(pollUnseen, 30000);
+    return () => clearInterval(id);
+  }, [isLoggedIn, pollUnseen]);
+
+  const dismissToast = useCallback(() => {
+    setToastQueue([]);
+  }, []);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     setFetchError("");
@@ -3909,6 +4197,7 @@ function App() {
   const handleRefreshAndBack = async () => {
     await fetchData();
     setSelectedGame(null);
+    setTimeout(pollUnseen, 1500);
   };
 
   const activeGame = games.find((g) => !g.isComplete);
@@ -4012,7 +4301,18 @@ function App() {
             )}
             {tab === "players"      && <PlayersTab players={players} onRefresh={fetchData} isOwner={isOwner} isAdmin={isAdmin} />}
             {tab === "rules"        && <RulesTab isOwner={isOwner} isAdmin={isAdmin} />}
-            {tab === "achievements" && <AchievementsTab isAdmin={isAdmin} />}
+            {tab === "achievements" && (
+              <AchievementsTab
+                isAdmin={isAdmin}
+                onPreviewToast={(achievement) => setToastQueue((q) => [
+                  { achievementId: achievement.id, earnedAt: new Date().toISOString(), gameId: null, count: 1,
+                    name: achievement.name, description: achievement.description,
+                    imageSvg: achievement.imageSvg, imageFrame: achievement.imageFrame,
+                    xpValue: achievement.xpValue ?? 0 },
+                  ...q,
+                ])}
+              />
+            )}
             {tab === "stats"        && <StatsTab />}
             {tab === "ask-claude"   && isAdmin && <AskClaudeTab />}
             {tab === "admin"        && isAdmin && <AdminPanel />}
@@ -4036,6 +4336,15 @@ function App() {
             storeAvatar(path);
           }}
           onSignOut={() => { setShowProfile(false); signOut(); }}
+        />
+      )}
+
+      {toastQueue.length > 0 && (
+        <AchievementToast
+          key={toastQueue.map((a) => a.achievementId).join(",")}
+          achievements={toastQueue}
+          onDismiss={dismissToast}
+          onViewAll={() => { setSelectedGame(null); setTab("achievements"); }}
         />
       )}
     </div>

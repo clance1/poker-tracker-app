@@ -218,6 +218,20 @@ const builtinAchievements = [
       streakCondition: 'profit',
     }),
   },
+  {
+    id: 'ach-first-steps',
+    name: 'First Steps',
+    description: 'Create your account and join the game.',
+    criteria: 'profile_created',
+    criteriaJson: JSON.stringify({ scope: 'profile', trigger: 'profile_created' }),
+  },
+  {
+    id: 'ach-face-of-the-game',
+    name: 'Face of the Game',
+    description: 'Upload a profile picture.',
+    criteria: 'profile_avatar',
+    criteriaJson: JSON.stringify({ scope: 'profile', trigger: 'profile_avatar' }),
+  },
 ];
 
 for (const ach of builtinAchievements) {
@@ -251,5 +265,8 @@ addCol('achievements', 'imageFrame', 'TEXT');
 
 // user_achievements: how many times a user has earned the same achievement
 addCol('user_achievements', 'count', 'INTEGER NOT NULL DEFAULT 1');
+// user_achievements: whether the user has been notified (1 = seen, 0 = pending toast)
+// Default 1 for existing rows so they don't spam on first deploy
+addCol('user_achievements', 'seen', 'INTEGER NOT NULL DEFAULT 1');
 
 module.exports = db;

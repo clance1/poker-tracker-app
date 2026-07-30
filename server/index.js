@@ -252,6 +252,7 @@ app.post('/api/register', registerLimiter, async (req, res) => {
         .run(uuidv4(), username, id, new Date().toISOString());
     } catch (_e) {}
     try { awardXP(id, getXpConfig('create_profile'), 'Created a profile'); } catch (_e) {}
+    try { awardProfileAchievement(id, 'profile_created'); } catch (_e) {}
     const token = jwt.sign({ userId: id, username, role: 'user' }, JWT_SECRET, { expiresIn: '30d' });
     res.cookie('auth_token', token, COOKIE_OPTS);
     res.json({ username, role: 'user' });
@@ -367,6 +368,7 @@ app.post('/api/profile/avatar', auth, (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     const avatarPath = `/avatars/${req.file.filename}`;
     db.prepare('UPDATE users SET avatarPath = ? WHERE id = ?').run(avatarPath, req.user.userId);
+    try { awardProfileAchievement(req.user.userId, 'profile_avatar'); } catch (_e) {}
     res.json({ avatarPath });
   });
 });
@@ -1091,9 +1093,9 @@ function awardAchievements(gameId) {
         try {
           const now = new Date().toISOString();
           db.prepare(`
-            INSERT INTO user_achievements (id, userId, achievementId, earnedAt, gameId, count)
-            VALUES (?, ?, ?, ?, ?, 1)
-            ON CONFLICT(userId, achievementId) DO UPDATE SET count = count + 1
+            INSERT INTO user_achievements (id, userId, achievementId, earnedAt, gameId, count, seen)
+            VALUES (?, ?, ?, ?, ?, 1, 0)
+            ON CONFLICT(userId, achievementId) DO UPDATE SET count = count + 1, seen = 0, earnedAt = excluded.earnedAt, gameId = excluded.gameId
           `).run(uuidv4(), pm.userId, ach.id, now, gameId);
           const awardedUser = db.prepare(
             'SELECT username, firstName, lastName FROM users WHERE id = ?'
@@ -1107,6 +1109,27 @@ function awardAchievements(gameId) {
       }
     }
   }
+}
+
+// Award a profile-scoped achievement by trigger name (one-time; silently skips if already earned)
+function awardProfileAchievement(userId, trigger) {
+  try {
+    const ach = db.prepare("SELECT * FROM achievements WHERE criteria = ? AND isActive = 1").get(trigger);
+    if (!ach) return;
+    const now = new Date().toISOString();
+    const result = db.prepare(`
+      INSERT OR IGNORE INTO user_achievements (id, userId, achievementId, earnedAt, gameId, count, seen)
+      VALUES (?, ?, ?, ?, NULL, 1, 0)
+    `).run(uuidv4(), userId, ach.id, now);
+    if (result.changes > 0) {
+      const user = db.prepare('SELECT username, firstName, lastName FROM users WHERE id = ?').get(userId);
+      if (user) {
+        const name = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username;
+        telegramNotify(`🏆 <b>${name}</b> just earned the "<b>${ach.name}</b>" achievement!`);
+      }
+      if (ach.xpValue > 0) awardXP(userId, ach.xpValue, `Achievement: ${ach.name}`, ach.id);
+    }
+  } catch (_e) {}
 }
 
 // Legacy string-based criteria (fallback for achievements without criteriaJson)
@@ -1145,6 +1168,23 @@ const achievementUpload = multer({
 });
 
 app.use('/achievement-images', express.static(achievementDir));
+
+// GET unseen achievements for the current user, then mark them seen
+app.get('/api/achievements/unseen', auth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT ua.achievementId, ua.earnedAt, ua.gameId, ua.count,
+           a.name, a.description, a.imageSvg, a.imageFrame, a.xpValue
+    FROM user_achievements ua
+    JOIN achievements a ON ua.achievementId = a.id
+    WHERE ua.userId = ? AND ua.seen = 0
+  `).all(req.user.userId);
+
+  if (rows.length > 0) {
+    db.prepare('UPDATE user_achievements SET seen = 1 WHERE userId = ? AND seen = 0').run(req.user.userId);
+  }
+
+  res.json(rows);
+});
 
 // GET all achievements + which ones current user has earned
 app.get('/api/achievements', auth, (req, res) => {
@@ -1185,6 +1225,18 @@ app.get('/api/achievements/all-users', auth, (req, res) => {
     SELECT ua.userId, ua.achievementId, ua.earnedAt, a.name, a.imageSvg
     FROM user_achievements ua
     JOIN achievements a ON ua.achievementId = a.id
+  `).all();
+  res.json(rows);
+});
+
+// GET per-user achievement counts for leaderboard
+app.get('/api/achievements/counts', auth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT ua.userId, COUNT(*) as achievementCount
+    FROM user_achievements ua
+    JOIN achievements a ON ua.achievementId = a.id
+    WHERE a.isActive = 1
+    GROUP BY ua.userId
   `).all();
   res.json(rows);
 });
@@ -1434,9 +1486,9 @@ app.post('/api/achievements/:id/users/:userId', adminAuth, (req, res) => {
   const displayName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username;
   try {
     db.prepare(`
-      INSERT INTO user_achievements (id, userId, achievementId, earnedAt, gameId, count)
-      VALUES (?, ?, ?, ?, NULL, 1)
-      ON CONFLICT(userId, achievementId) DO UPDATE SET count = count + 1
+      INSERT INTO user_achievements (id, userId, achievementId, earnedAt, gameId, count, seen)
+      VALUES (?, ?, ?, ?, NULL, 1, 0)
+      ON CONFLICT(userId, achievementId) DO UPDATE SET count = count + 1, seen = 0, earnedAt = excluded.earnedAt
     `).run(uuidv4(), req.params.userId, req.params.id, now);
 
     // Award XP every time the achievement is granted (first grant or re-grant)
