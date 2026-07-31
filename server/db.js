@@ -1,9 +1,8 @@
 const Database = require('better-sqlite3');
-const path = require('path');
+const paths = require('./paths');
 
-const dbDir = path.join(__dirname, '../data');
-require('fs').mkdirSync(dbDir, { recursive: true });
-const db = new Database(path.join(dbDir, 'poker.db'));
+require('fs').mkdirSync(paths.DATA_DIR, { recursive: true });
+const db = new Database(paths.dbPath);
 
 // Keep FK enforcement off — we handle referential integrity in application code
 db.pragma('foreign_keys = OFF');
