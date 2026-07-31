@@ -29,22 +29,12 @@ test('mechanically detect duplicate route registrations in app._router.stack', (
     .map(([r]) => r)
     .sort();
 
-  // KNOWN, CURRENT duplicates as of this characterization suite. Express matches
-  // routes in registration order and stops at the first match (none of these
-  // handlers call next()), so for each pair the FIRST-registered definition
-  // always wins and the second is unreachable dead code.
-  //
-  // When a later commit deletes the dead duplicates, update this array to []
-  // (empty). If this assertion starts failing after such a cleanup, that is the
-  // *intended* signal to update the expectation -- it does not mean the cleanup
-  // broke anything.
-  const expected = [
-    'DELETE /api/users/:id',
-    'GET /api/owners',
-    'GET /api/users',
-    'PATCH /api/users/:id',
-    'POST /api/ask-claude',
-  ];
+  // Guard against duplicate route registrations. Express matches routes in
+  // registration order and stops at the first match (none of these handlers
+  // call next()), so duplicate registrations result in unreachable dead code.
+  // This assertion verifies there are zero duplicate registrations -- a regression
+  // test to ensure duplicates are not accidentally reintroduced in future commits.
+  const expected = [];
 
   assert.deepStrictEqual(dupes, expected, `Full route list was:\n${routes.join('\n')}`);
 });
