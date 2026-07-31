@@ -120,6 +120,19 @@ for (const [key, value, label] of xpConfigDefaults) {
   try { db.prepare('INSERT OR IGNORE INTO xp_config (key, value, label) VALUES (?, ?, ?)').run(key, value, label); } catch (_e) {}
 }
 
+// Scheduled games
+db.exec(`
+  CREATE TABLE IF NOT EXISTS scheduled_games (
+    id TEXT PRIMARY KEY,
+    scheduledDate TEXT NOT NULL,
+    scheduledTime TEXT NOT NULL,
+    location TEXT,
+    createdBy TEXT NOT NULL,
+    createdAt TEXT NOT NULL,
+    reminderSent INTEGER NOT NULL DEFAULT 0
+  )
+`);
+
 // Achievements tables
 db.exec(`
   CREATE TABLE IF NOT EXISTS achievements (
@@ -268,5 +281,8 @@ addCol('user_achievements', 'count', 'INTEGER NOT NULL DEFAULT 1');
 // user_achievements: whether the user has been notified (1 = seen, 0 = pending toast)
 // Default 1 for existing rows so they don't spam on first deploy
 addCol('user_achievements', 'seen', 'INTEGER NOT NULL DEFAULT 1');
+
+// users: Telegram user ID for personal DM notifications
+addCol('users', 'telegramUserId', 'TEXT');
 
 module.exports = db;

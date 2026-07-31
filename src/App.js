@@ -254,6 +254,7 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
+  const [telegramUserId, setTelegramUserId] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPwSection, setShowPwSection] = useState(false);
@@ -271,6 +272,7 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
       setFirstName(p.firstName ?? "");
       setLastName(p.lastName ?? "");
       setEmail(p.email ?? "");
+      setTelegramUserId(p.telegramUserId ?? "");
       setAvatarPreview(p.avatarPath ?? null);
     }).catch(() => setError("Failed to load profile."));
   }, []);
@@ -317,6 +319,9 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
     body.lastName = ln;
     if (em && !isValidEmail(em)) return setError("Invalid email address.");
     body.email = em;
+    const tg = telegramUserId.trim();
+    if (tg && !/^\d{1,15}$/.test(tg)) return setError("Telegram user ID must be a number (find yours at @userinfobot).");
+    body.telegramUserId = tg;
     if (showPwSection) {
       if (!newPassword) return setError("Enter a new password.");
       if (newPassword.length < 6) return setError("Password must be at least 6 characters.");
@@ -327,8 +332,9 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
     try {
       const updated = await apiFetch("/api/profile", { method: "PATCH", body });
       setProfile(updated);
+      setTelegramUserId(updated.telegramUserId ?? "");
       setNewPassword(""); setConfirmPassword(""); setShowPwSection(false);
-      setSuccess("Profile saved.");
+      setSuccess(updated.telegramUserId && !profile?.telegramUserId ? "Profile saved. Check Telegram — the bot will DM you shortly!" : "Profile saved.");
     } catch (err) {
       let msg = err.message;
       try { msg = JSON.parse(err.message).error || msg; } catch {}
@@ -407,9 +413,32 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
               </div>
 
               <div className="auth-field">
-                <label className="field-label">Email</label>
+                <label className="field-label">Email <span className="field-optional">(optional)</span></label>
                 <input type="email" className="input" placeholder="your@email.com"
                   value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254} />
+              </div>
+
+              <div className="auth-field">
+                <label className="field-label">
+                  Telegram User ID <span className="field-optional">(optional)</span>
+                  {telegramUserId && profile?.telegramUserId === telegramUserId && (
+                    <span className="tg-linked-badge">Linked</span>
+                  )}
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  className="input"
+                  placeholder="e.g. 123456789"
+                  value={telegramUserId}
+                  onChange={(e) => setTelegramUserId(e.target.value.replace(/\D/g, ""))}
+                  maxLength={15}
+                />
+                <div className="tg-help">
+                  <span>1. Message <b>@userinfobot</b> on Telegram to get your numeric ID.</span>
+                  <span>2. Start a chat with the poker bot so it can DM you.</span>
+                  <span>3. Save — the bot will add you to the group automatically.</span>
+                </div>
               </div>
 
               <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }}
@@ -834,7 +863,7 @@ function Leaderboard({ players }) {
 }
 
 // --- Game History ---
-function GameHistory({ games, onSelectGame, onNewGame, isOwner, isAdmin, onRefresh }) {
+function GameHistory({ games, scheduledGames, onSelectGame, onNewGame, onScheduleGame, isOwner, isAdmin, onRefresh }) {
   const sorted = [...games].sort((a, b) => b.date.localeCompare(a.date));
 
   const deleteGame = async (e, id) => {
@@ -850,10 +879,48 @@ function GameHistory({ games, onSelectGame, onNewGame, isOwner, isAdmin, onRefre
     }
   };
 
+  const deleteScheduled = async (e, id) => {
+    e.stopPropagation();
+    if (!window.confirm("Cancel this scheduled game?")) return;
+    try {
+      await apiFetch(`/api/scheduled-games/${id}`, { method: "DELETE" });
+      await onRefresh();
+    } catch (_e) {}
+  };
+
+  const fmtScheduledDate = (date, time) => {
+    const dt = new Date(`${date}T${time}:00`);
+    return dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+      + " · " + dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  };
+
   return (
     <div className="game-history">
       {isOwner && (
-        <button className="btn btn-primary new-game-btn" onClick={onNewGame}>+ New Game</button>
+        <div className="game-history-actions">
+          <button className="btn btn-primary new-game-btn" onClick={onNewGame}>+ New Game</button>
+          <button className="btn btn-ghost new-game-btn" onClick={onScheduleGame}>🗓 Schedule</button>
+        </div>
+      )}
+
+      {/* Upcoming scheduled games */}
+      {scheduledGames && scheduledGames.length > 0 && (
+        <div className="scheduled-games-section">
+          <div className="scheduled-games-label">Upcoming</div>
+          {scheduledGames.map((sg) => (
+            <div key={sg.id} className="scheduled-game-card">
+              <div className="scheduled-game-icon">🗓</div>
+              <div className="scheduled-game-info">
+                <div className="scheduled-game-datetime">{fmtScheduledDate(sg.scheduledDate, sg.scheduledTime)}</div>
+                {sg.location && <div className="scheduled-game-location">📍 {sg.location}</div>}
+              </div>
+              {isOwner && (
+                <button className="btn-icon delete-btn" title="Cancel scheduled game"
+                  onClick={(e) => deleteScheduled(e, sg.id)}>✕</button>
+              )}
+            </div>
+          ))}
+        </div>
       )}
       {sorted.length === 0 ? (
         <div className="empty-state"><div className="empty-icon">♣</div><p>No games yet. {isOwner ? "Start one!" : "Ask an Owner to create one."}</p></div>
@@ -1016,6 +1083,79 @@ function NewGameModal({ players, onClose, onCreate }) {
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
           <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>{saving ? "Creating..." : "Start Game"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Schedule Game Modal ---
+function ScheduleGameModal({ onClose, onScheduled }) {
+  const tomorrow = () => {
+    const d = new Date(); d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  };
+  const [date, setDate] = useState(tomorrow());
+  const [time, setTime] = useState("19:00");
+  const [location, setLocation] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSchedule = async () => {
+    if (!date) return setError("Pick a date.");
+    if (!time) return setError("Pick a time.");
+    setSaving(true); setError("");
+    try {
+      await apiFetch("/api/scheduled-games", {
+        method: "POST",
+        body: { date, time, location: sanitizeInput(location, 100) || undefined },
+      });
+      onScheduled();
+      onClose();
+    } catch (err) {
+      let msg = err.message;
+      try { msg = JSON.parse(err.message).error || msg; } catch {}
+      setError(msg);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>Schedule a Game</h2>
+          <button className="close-btn" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          <div style={{ display: "flex", gap: 12 }}>
+            <div className="auth-field" style={{ flex: 2 }}>
+              <label className="field-label">Date</label>
+              <input type="date" className="input" value={date} min={todayISO()}
+                onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div className="auth-field" style={{ flex: 1 }}>
+              <label className="field-label">Time</label>
+              <input type="time" className="input" value={time}
+                onChange={(e) => setTime(e.target.value)} />
+            </div>
+          </div>
+          <div className="auth-field" style={{ marginTop: 14 }}>
+            <label className="field-label">Location <span className="field-optional">(optional)</span></label>
+            <input type="text" className="input" placeholder="e.g. Carson's House"
+              value={location} onChange={(e) => setLocation(e.target.value)} maxLength={100} />
+          </div>
+          <div className="tg-help" style={{ marginTop: 14 }}>
+            <span>📣 Telegram group will be notified immediately.</span>
+            <span>⏰ A 24-hour reminder is sent automatically.</span>
+          </div>
+          {error && <p className="error-msg" style={{ marginTop: 10 }}>{error}</p>}
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSchedule} disabled={saving}>
+            {saving ? "Scheduling…" : "Schedule Game"}
+          </button>
         </div>
       </div>
     </div>
@@ -2795,6 +2935,17 @@ function ImageFramer({ src, frame, onChange }) {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- handlers only use stable refs
 
+  const PAN_STEP = 0.05;
+
+  const stepPan = useCallback((dx, dy) => {
+    onChangeRef.current({ ...frameRef.current, x: frameRef.current.x + dx, y: frameRef.current.y + dy });
+  }, []);
+
+  const stepZoom = useCallback((factor) => {
+    const f = frameRef.current;
+    onChangeRef.current({ ...f, scale: Math.max(0.25, Math.min(6, f.scale * factor)) });
+  }, []);
+
   const f = frame || { x: 0, y: 0, scale: 1 };
   return (
     <div className="image-framer-outer">
@@ -2825,6 +2976,16 @@ function ImageFramer({ src, frame, onChange }) {
         {/* Frame guide — sits above image in stacking order, marks the exact card boundary */}
         <div className="image-framer-guide" aria-hidden="true" />
         <div className="image-framer-hint">drag · scroll · pinch</div>
+      </div>
+      {/* Tap-friendly controls for mobile and precision desktop use */}
+      <div className="framer-controls">
+        <button className="framer-ctrl-btn" onClick={() => stepPan(0, -PAN_STEP)} title="Pan up">↑</button>
+        <button className="framer-ctrl-btn" onClick={() => stepPan(0, PAN_STEP)} title="Pan down">↓</button>
+        <button className="framer-ctrl-btn" onClick={() => stepPan(-PAN_STEP, 0)} title="Pan left">←</button>
+        <button className="framer-ctrl-btn" onClick={() => stepPan(PAN_STEP, 0)} title="Pan right">→</button>
+        <div className="framer-ctrl-divider" />
+        <button className="framer-ctrl-btn" onClick={() => stepZoom(1.15)} title="Zoom in">+</button>
+        <button className="framer-ctrl-btn" onClick={() => stepZoom(0.87)} title="Zoom out">−</button>
       </div>
     </div>
   );
@@ -4113,10 +4274,12 @@ function App() {
   const [tab, setTab] = useState("leaderboard");
   const [players, setPlayers] = useState([]);
   const [games, setGames] = useState([]);
+  const [scheduledGames, setScheduledGames] = useState([]);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState("");
   const [selectedGame, setSelectedGame] = useState(null);
   const [showNewGame, setShowNewGame] = useState(false);
+  const [showScheduleGame, setShowScheduleGame] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [currentUsername, setCurrentUsername] = useState(getStoredUsername);
   const [currentRole, setCurrentRole] = useState(getRole);
@@ -4149,12 +4312,14 @@ function App() {
     setLoading(true);
     setFetchError("");
     try {
-      const [playersData, gamesData] = await Promise.all([
+      const [playersData, gamesData, scheduledData] = await Promise.all([
         apiFetch("/api/players"),
         apiFetch("/api/games"),
+        apiFetch("/api/scheduled-games").catch(() => ({ games: [] })),
       ]);
       setPlayers(playersData.items);
       setGames(gamesData.items ?? []);
+      setScheduledGames(scheduledData.games ?? []);
     } catch (e) {
       setFetchError(e.message || "Failed to load data.");
     }
@@ -4292,8 +4457,10 @@ function App() {
             {tab === "games"        && (
               <GameHistory
                 games={games}
+                scheduledGames={scheduledGames}
                 onSelectGame={handleSelectGame}
                 onNewGame={() => setShowNewGame(true)}
+                onScheduleGame={() => setShowScheduleGame(true)}
                 isOwner={isOwner}
                 isAdmin={isAdmin}
                 onRefresh={fetchData}
@@ -4325,6 +4492,13 @@ function App() {
           players={players}
           onClose={() => setShowNewGame(false)}
           onCreate={handleNewGameCreated}
+        />
+      )}
+
+      {showScheduleGame && (
+        <ScheduleGameModal
+          onClose={() => setShowScheduleGame(false)}
+          onScheduled={fetchData}
         />
       )}
 

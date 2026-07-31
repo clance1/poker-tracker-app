@@ -587,9 +587,52 @@ body {
 /* ─── Game History ───────────────────────────────────────────────────────── */
 .game-history { display: flex; flex-direction: column; gap: 10px; }
 
+.game-history-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
 .new-game-btn {
   align-self: flex-start;
-  margin-bottom: 6px;
+}
+
+/* ── Scheduled Games ───────────────────────────────────────────────────── */
+.scheduled-games-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.scheduled-games-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  padding-bottom: 2px;
+}
+.scheduled-game-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(250, 199, 117, 0.07);
+  border: 1px solid rgba(250, 199, 117, 0.25);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.scheduled-game-icon { font-size: 18px; flex-shrink: 0; }
+.scheduled-game-info { flex: 1; min-width: 0; }
+.scheduled-game-datetime {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.scheduled-game-location {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 
 .game-card {
@@ -2681,20 +2724,52 @@ body {
   background: rgba(0, 0, 0, 0.6);
   border-radius: 12px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: 0;
 }
 .image-framer {
   position: relative;
   overflow: hidden;
   width: 100%;
+  /* max-width enforces 4:5 height cap — max-height alone breaks aspect-ratio */
+  max-width: 320px;
   aspect-ratio: 4 / 5;
-  max-height: 320px;
   border-radius: 6px;
   background: var(--surface2, #1a1a1a);
   cursor: grab;
+  margin: 0 auto;
 }
 .image-framer:active { cursor: grabbing; }
+/* Tap-friendly pan / zoom buttons for mobile + precision desktop edits */
+.framer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.framer-ctrl-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-radius: 9px;
+  background: var(--surface2, #1a1a1a);
+  color: var(--text-secondary, #8b949e);
+  font-size: 18px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: background 0.12s, color 0.12s;
+}
+.framer-ctrl-btn:hover { background: var(--surface3, #252525); color: var(--text, #e6edf3); }
+.framer-ctrl-btn:active { background: var(--primary, #d4af37); color: #000; border-color: var(--primary, #d4af37); }
+.framer-ctrl-divider { width: 1px; height: 26px; background: var(--border, rgba(255,255,255,0.1)); border-radius: 1px; margin: 0 2px; }
 /* Gold frame overlay — marks the exact card-display boundary, stacks above the img */
 .image-framer-guide {
   position: absolute;
@@ -2718,6 +2793,41 @@ body {
   padding: 2px 8px;
   border-radius: 10px;
 }
+
+/* ── Field helpers ───────────────────────────────────────────────────── */
+.field-optional {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+.tg-linked-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(63, 185, 80, 0.18);
+  color: #3fb950;
+  border: 1px solid rgba(63, 185, 80, 0.35);
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+}
+.tg-help {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: rgba(88, 166, 255, 0.07);
+  border: 1px solid rgba(88, 166, 255, 0.18);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #8b949e);
+  line-height: 1.5;
+}
+.tg-help b { color: #58a6ff; }
 
 /* ── Profile modal footer with Sign Out ──────────────────────────────── */
 .profile-modal-footer {

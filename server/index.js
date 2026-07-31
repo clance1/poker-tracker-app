@@ -112,6 +112,47 @@ const telegramSend = (chatId, text) => {
 
 const telegramNotify = (text) => telegramSend(process.env.TELEGRAM_CHAT_ID, text);
 
+// DM every user who has linked their Telegram account
+function telegramDmLinked(text) {
+  try {
+    const users = db.prepare('SELECT telegramUserId FROM users WHERE telegramUserId IS NOT NULL').all();
+    for (const u of users) telegramSend(u.telegramUserId, text);
+  } catch (_e) {}
+}
+
+// Broadcast to group + all linked-user DMs
+const telegramBroadcast = (text) => { telegramNotify(text); telegramDmLinked(text); };
+
+// Try to add a user to the configured group; fall back to invite-link DM on failure
+function telegramInviteToGroup(telegramUserId) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return;
+  const body = JSON.stringify({ chat_id: chatId, user_id: parseInt(telegramUserId, 10) });
+  const req = https.request({
+    hostname: 'api.telegram.org',
+    path: `/bot${token}/addChatMember`,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+  }, (res) => {
+    let raw = '';
+    res.on('data', c => { raw += c; });
+    res.on('end', () => {
+      try {
+        const json = JSON.parse(raw);
+        if (!json.ok) {
+          // Can't auto-add — send invite link if configured
+          const link = process.env.TELEGRAM_INVITE_LINK;
+          if (link) telegramSend(telegramUserId, `📲 <b>Join the Carson's Game group</b> to receive game updates:\n${link}`);
+        }
+      } catch (_e) {}
+    });
+  });
+  req.on('error', () => {});
+  req.write(body);
+  req.end();
+}
+
 // --- XP helpers ---
 function getXpConfig(key) {
   try {
@@ -317,7 +358,7 @@ app.post('/api/change-password', async (req, res) => {
 // --- Profile ---
 app.get('/api/profile', auth, (req, res) => {
   const user = db.prepare(
-    'SELECT id, username, firstName, lastName, email, role, avatarPath, xp, createdAt FROM users WHERE id = ?'
+    'SELECT id, username, firstName, lastName, email, telegramUserId, role, avatarPath, xp, createdAt FROM users WHERE id = ?'
   ).get(req.user.userId);
   if (!user) return res.status(404).json({ error: 'User not found.' });
   res.json(user);
@@ -354,11 +395,38 @@ app.patch('/api/profile', auth, async (req, res) => {
     vals.push(await bcrypt.hash(req.body.password, BCRYPT_ROUNDS));
   }
 
+  let pendingTelegramLink = null;
+  if (req.body.telegramUserId !== undefined) {
+    const raw = String(req.body.telegramUserId || '').trim();
+    if (raw === '') {
+      sets.push('telegramUserId = ?'); vals.push(null);
+    } else {
+      if (!/^\d{1,15}$/.test(raw))
+        return res.status(400).json({ error: 'Invalid Telegram user ID — must be a numeric ID (find yours at @userinfobot).' });
+      sets.push('telegramUserId = ?'); vals.push(raw);
+      if (user.telegramUserId !== raw) pendingTelegramLink = raw;
+    }
+  }
+
   if (sets.length === 0) return res.json({ message: 'No changes.' });
   db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...vals, req.user.userId);
   const updated = db.prepare(
-    'SELECT id, username, firstName, lastName, email, role, avatarPath, createdAt FROM users WHERE id = ?'
+    'SELECT id, username, firstName, lastName, email, telegramUserId, role, avatarPath, createdAt FROM users WHERE id = ?'
   ).get(req.user.userId);
+
+  // Send welcome DM + attempt group add after response is sent
+  if (pendingTelegramLink) {
+    const displayName = (user.firstName ? `${user.firstName}${user.lastName ? ' ' + user.lastName : ''}` : user.username);
+    process.nextTick(() => {
+      telegramSend(pendingTelegramLink,
+        `🃏 <b>Welcome to Carson's Game, ${displayName}!</b>\n\n` +
+        `Your Telegram is now linked. You'll receive game updates here:\n` +
+        `• Game start\n• Buy-ins &amp; rebuys\n• Cash-outs\n• Game results`
+      );
+      telegramInviteToGroup(pendingTelegramLink);
+    });
+  }
+
   res.json(updated);
 });
 
@@ -591,7 +659,7 @@ app.post('/api/games', ownerAuth, (req, res) => {
   db.prepare('INSERT INTO games (id, date, isComplete, ownerId, location, startTime, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(id, date, isComplete ? 1 : 0, ownerId, location, startTime, new Date().toISOString());
   const locationNote = location ? `\n📍 ${location}` : '';
-  telegramNotify(`🃏 <b>New game started!</b>\n📅 ${date} at ${startTime}${locationNote}`);
+  telegramBroadcast(`🃏 <b>New game started!</b>\n📅 ${date} at ${startTime}${locationNote}`);
   res.json({ id, date, isComplete, ownerId, location, startTime, endTime: null });
 });
 
@@ -621,7 +689,7 @@ app.put('/api/games/:id', ownerAuth, (req, res) => {
         const net = (gp.cashOut || 0) - gp.buyIn - (gp.rebuys || 0);
         return `  ${gp.name}: ${net >= 0 ? '+' : ''}$${net.toFixed(0)}`;
       });
-    telegramNotify(`🏁 <b>Game Over! — ${game.date}</b>\n${lines.join('\n')}\n\n💰 Pot: $${pot.toFixed(0)}`);
+    telegramBroadcast(`🏁 <b>Game Over! — ${game.date}</b>\n${lines.join('\n')}\n\n💰 Pot: $${pot.toFixed(0)}`);
 
     // Award XP for game completion
     try {
@@ -660,6 +728,62 @@ app.delete('/api/games/:id', adminAuth, (req, res) => {
   res.json({ id: req.params.id });
 });
 
+// --- Scheduled Games ---
+const fmtScheduledDateTime = (date, time) => {
+  const dt = new Date(`${date}T${time}:00`);
+  const day = dt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const t = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `${day} at ${t}`;
+};
+
+app.get('/api/scheduled-games', auth, (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const games = db.prepare(
+    'SELECT * FROM scheduled_games WHERE scheduledDate >= ? ORDER BY scheduledDate ASC, scheduledTime ASC'
+  ).all(today);
+  res.json({ games });
+});
+
+app.post('/api/scheduled-games', ownerAuth, (req, res) => {
+  const date = sanitizeStr(req.body.date, 10);
+  const time = sanitizeStr(req.body.time, 5);
+  const location = sanitizeStr(req.body.location || '', 100) || null;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date.' });
+  if (!time || !/^\d{2}:\d{2}$/.test(time)) return res.status(400).json({ error: 'Invalid time.' });
+  const id = uuidv4();
+  db.prepare('INSERT INTO scheduled_games (id, scheduledDate, scheduledTime, location, createdBy, createdAt) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, date, time, location, req.user.userId, new Date().toISOString());
+  const locationNote = location ? `\n📍 ${location}` : '';
+  telegramBroadcast(`🗓️ <b>Game Scheduled!</b>\n📅 ${fmtScheduledDateTime(date, time)}${locationNote}`);
+  res.json({ id, scheduledDate: date, scheduledTime: time, location });
+});
+
+app.delete('/api/scheduled-games/:id', ownerAuth, (req, res) => {
+  const sg = db.prepare('SELECT id FROM scheduled_games WHERE id = ?').get(req.params.id);
+  if (!sg) return res.status(404).json({ error: 'Scheduled game not found.' });
+  db.prepare('DELETE FROM scheduled_games WHERE id = ?').run(req.params.id);
+  res.json({ id: req.params.id });
+});
+
+// 24-hour reminder poller — runs every 5 minutes
+function checkScheduledGameReminders() {
+  try {
+    const pending = db.prepare('SELECT * FROM scheduled_games WHERE reminderSent = 0').all();
+    const now = Date.now();
+    const in24h = now + 24 * 60 * 60 * 1000;
+    for (const g of pending) {
+      const gameMs = new Date(`${g.scheduledDate}T${g.scheduledTime}:00`).getTime();
+      if (gameMs > now && gameMs <= in24h) {
+        const locationNote = g.location ? `\n📍 ${g.location}` : '';
+        telegramBroadcast(`⏰ <b>Game Tomorrow!</b>\n📅 ${fmtScheduledDateTime(g.scheduledDate, g.scheduledTime)}${locationNote}\n\nSee you there! 🃏`);
+        db.prepare('UPDATE scheduled_games SET reminderSent = 1 WHERE id = ?').run(g.id);
+      }
+    }
+  } catch (_e) {}
+}
+setInterval(checkScheduledGameReminders, 5 * 60 * 1000);
+checkScheduledGameReminders();
+
 // --- Game Players ---
 app.post('/api/game-players', auth, (req, res) => {
   const { gameID, playerID, rebuys = 0 } = req.body;
@@ -673,7 +797,7 @@ app.post('/api/game-players', auth, (req, res) => {
     const player = db.prepare('SELECT name FROM players WHERE id = ?').get(playerID);
     const game = db.prepare('SELECT date FROM games WHERE id = ?').get(gameID);
     if (player && game)
-      telegramNotify(`💵 <b>${player.name}</b> bought in for $${buyIn.toFixed(0)} — ${game.date}`);
+      telegramBroadcast(`💵 <b>${player.name}</b> bought in for $${buyIn.toFixed(0)} — ${game.date}`);
   } catch (_e) {}
   res.json({ id, gameID, playerID, buyIn, rebuys });
 });
@@ -708,14 +832,14 @@ app.put('/api/game-players/:id', auth, (req, res) => {
     if (row) {
       if (req.body.rebuys !== undefined && parseFloat(req.body.rebuys) > (gp.rebuys || 0)) {
         const amt = parseFloat(req.body.rebuys) - (gp.rebuys || 0);
-        telegramNotify(`🔄 <b>${row.name}</b> rebuyed $${amt.toFixed(0)}`);
+        telegramBroadcast(`🔄 <b>${row.name}</b> rebuyed $${amt.toFixed(0)}`);
         if (gp.linkedUserId) {
           const penalty = getXpConfig('additional_buyin_penalty');
           if (penalty !== 0) awardXP(gp.linkedUserId, penalty, 'Additional buy-in', gp.gameID);
         }
       }
       if (req.body.cashOut !== undefined && gp.cashOut == null) {
-        telegramNotify(`💰 <b>${row.name}</b> cashed out $${parseFloat(req.body.cashOut).toFixed(0)}`);
+        telegramBroadcast(`💰 <b>${row.name}</b> cashed out $${parseFloat(req.body.cashOut).toFixed(0)}`);
       }
     }
   } catch (_e) {}
