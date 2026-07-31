@@ -26,12 +26,16 @@
     "uuid": "^9.0.1",
     "web-vitals": "^2.1.0"
   },
+  "devDependencies": {
+    "supertest": "^7.0.0"
+  },
   "scripts": {
     "start": "concurrently \"node server/index.js\" \"react-scripts start\"",
     "server": "node server/index.js",
     "build": "react-scripts build",
     "serve": "node server/index.js",
     "test": "react-scripts test",
+    "test:server": "node --test server/tests/",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {
