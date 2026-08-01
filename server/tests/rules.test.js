@@ -33,9 +33,14 @@ describe('rules: PRE-EXISTING BUG -- fresh DB schema is missing columns app.js r
     assert.strictEqual(res.status, 500, 'BUG: fresh installs cannot create a rule at all -- see comment above');
   });
 
+  // NOTE (R2): PUT /api/rules/:id now enforces creator-or-owner/admin
+  // authorization (see below), so this fixture makes `u` the rule's creator --
+  // otherwise the authz check would short-circuit with 403 before ever
+  // reaching the buggy UPDATE, and this test would no longer be exercising the
+  // missing-column bug it documents.
   test('PUT /api/rules/:id also 500s (same missing-column bug) once a rule row exists', async () => {
     const u = h.createUser({ role: 'user' });
-    const rule = h.createRuleRow({ gameName: h.uniqueName('game') }); // inserted directly, bypassing the broken POST
+    const rule = h.createRuleRow({ gameName: h.uniqueName('game'), createdBy: u.id }); // inserted directly, bypassing the broken POST
     const res = await agent.put(`/api/rules/${rule.id}`).set('Cookie', u.cookie).send({ gameName: 'Renamed' });
     assert.strictEqual(res.status, 500, 'BUG: same missing-column issue affects updates too');
   });
@@ -107,5 +112,39 @@ describe('rules: read + comments + delete (paths that do not touch the missing c
 
     const stillThere = db.prepare('SELECT id FROM rules WHERE id = ?').get(rule.id);
     assert.strictEqual(stillThere, undefined);
+  });
+});
+
+// BUG FIX (R2): PUT /api/rules/:id let ANY authenticated user edit ANY rule --
+// there was no check that the caller created the rule (or is owner/admin).
+// The authz check runs before the route touches any of the missing columns
+// (see the PRE-EXISTING BUG block above), so an unauthorized caller gets a
+// clean 403 rather than reaching the buggy UPDATE at all.
+describe('rules: PUT authorization (creator or owner/admin only)', () => {
+  test('a user who did NOT create the rule, and is not owner/admin -> 403 (never reaches the UPDATE)', async () => {
+    const creator = h.createUser({ role: 'user' });
+    const rule = h.createRuleRow({ gameName: h.uniqueName('notyours'), createdBy: creator.id });
+
+    const bystander = h.createUser({ role: 'user' });
+    const res = await agent.put(`/api/rules/${rule.id}`).set('Cookie', bystander.cookie).send({ gameName: 'Hijacked' });
+    assert.strictEqual(res.status, 403);
+
+    const stillOriginal = db.prepare('SELECT gameName FROM rules WHERE id = ?').get(rule.id);
+    assert.notStrictEqual(stillOriginal.gameName, 'Hijacked');
+  });
+
+  test('a rule with no createdBy (e.g. legacy row) -> any plain user still gets 403', async () => {
+    const rule = h.createRuleRow({ gameName: h.uniqueName('orphaned') }); // createdBy defaults to null
+    const u = h.createUser({ role: 'user' });
+    const res = await agent.put(`/api/rules/${rule.id}`).set('Cookie', u.cookie).send({ gameName: 'Hijacked' });
+    assert.strictEqual(res.status, 403);
+  });
+
+  test('owner role (not the creator) -> passes authz, reaches the pre-existing missing-column 500 (not 403)', async () => {
+    const creator = h.createUser({ role: 'user' });
+    const rule = h.createRuleRow({ gameName: h.uniqueName('ownercanedit'), createdBy: creator.id });
+    const owner = h.createUser({ role: 'owner' });
+    const res = await agent.put(`/api/rules/${rule.id}`).set('Cookie', owner.cookie).send({ gameName: 'Renamed' });
+    assert.strictEqual(res.status, 500, 'owner passed authorization; the 500 is the separate pre-existing schema bug, not a 403');
   });
 });

@@ -77,6 +77,14 @@ const registerLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const changePasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  message: { error: 'Too many password change attempts, try again in 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // --- Cookie options ---
 const COOKIE_OPTS = {
   httpOnly: true,
@@ -251,8 +259,17 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   try {
     req.user = jwt.verify(token, JWT_SECRET);
+    // The DB is authoritative for role (and existence) -- a JWT's claims are a
+    // snapshot from whenever it was issued and can go stale for up to 30 days
+    // (role changes, or the account being deleted entirely).
+    const row = db.prepare('SELECT id, role, isAdmin, mustChangePassword FROM users WHERE id = ?').get(req.user.userId);
+    if (!row) return res.status(401).json({ error: 'Invalid token' });
+    // A forced password rotation (admin reset) must invalidate any existing
+    // session -- otherwise resetting a compromised account's password is
+    // cosmetic and the attacker's cookie keeps working.
+    if (row.mustChangePassword) return res.status(401).json({ error: 'Invalid token' });
     // Backward compat: tokens issued before roles had isAdmin instead
-    if (!req.user.role) req.user.role = req.user.isAdmin ? 'admin' : 'user';
+    req.user.role = row.role ?? (row.isAdmin ? 'admin' : 'user');
     next();
   } catch {
     res.status(401).json({ error: 'Invalid token' });
@@ -336,7 +353,7 @@ app.post('/api/logout', (_req, res) => {
 });
 
 // --- Change password (used for forced admin rotation; verifies credentials without requiring cookie) ---
-app.post('/api/change-password', async (req, res) => {
+app.post('/api/change-password', changePasswordLimiter, async (req, res) => {
   const username = sanitizeStr(req.body.username, 30);
   const { currentPassword, newPassword } = req.body;
   if (!username || !currentPassword || !newPassword)
@@ -810,6 +827,21 @@ app.post('/api/game-players', auth, (req, res) => {
   const buyIn = parseFloat(req.body.buyIn);
   if (!gameID || !playerID) return res.status(400).json({ error: 'gameID and playerID required.' });
   if (isNaN(buyIn) || buyIn <= 0) return res.status(400).json({ error: 'Buy-in must be greater than $0.' });
+
+  // Ownership check mirrors PUT /api/game-players/:id: allow only if the
+  // caller is the linked player, the game owner, or has role owner/admin.
+  const player = db.prepare('SELECT userId FROM players WHERE id = ?').get(playerID);
+  const game = db.prepare('SELECT ownerId FROM games WHERE id = ?').get(gameID);
+
+  const isAdmin = req.user.role === 'admin';
+  const isOwner = req.user.role === 'owner' || req.user.role === 'admin';
+  const isLinkedPlayer = player && player.userId && player.userId === req.user.userId;
+  const isGameOwner = game && game.ownerId && game.ownerId === req.user.userId;
+
+  if (!isLinkedPlayer && !isOwner && !isGameOwner) {
+    return res.status(403).json({ error: 'You are not authorised to add this record.' });
+  }
+
   const id = uuidv4();
   db.prepare('INSERT INTO game_players (id, gameID, playerID, buyIn, rebuys) VALUES (?, ?, ?, ?, ?)')
     .run(id, gameID, playerID, buyIn, rebuys);
@@ -915,6 +947,12 @@ app.post('/api/rules', auth, (req, res) => {
 app.put('/api/rules/:id', auth, (req, res) => {
   const rule = db.prepare('SELECT * FROM rules WHERE id = ?').get(req.params.id);
   if (!rule) return res.status(404).json({ error: 'Rule not found.' });
+
+  const isOwnerOrAdmin = req.user.role === 'owner' || req.user.role === 'admin';
+  const isCreator = rule.createdBy && rule.createdBy === req.user.userId;
+  if (!isCreator && !isOwnerOrAdmin) {
+    return res.status(403).json({ error: 'Only the rule\'s creator or an Owner/Admin may edit it.' });
+  }
 
   const gameName = sanitizeStr(req.body.gameName, 100) || rule.gameName;
   const overview = req.body.overview !== undefined ? (sanitizeStr(req.body.overview, 500) || null) : rule.overview;
@@ -1583,6 +1621,10 @@ app.get('/api/admin/xp-config', adminAuth, (req, res) => {
 });
 
 app.patch('/api/admin/xp-config', adminAuth, (req, res) => {
+  const validKeys = new Set(db.prepare('SELECT key FROM xp_config').all().map((r) => r.key));
+  for (const key of Object.keys(req.body)) {
+    if (!validKeys.has(key)) return res.status(400).json({ error: `Unknown xp_config key: ${key}` });
+  }
   for (const [key, value] of Object.entries(req.body)) {
     const num = parseInt(value, 10);
     if (!isNaN(num)) db.prepare('UPDATE xp_config SET value = ? WHERE key = ?').run(num, key);
@@ -1713,6 +1755,12 @@ app.post('/api/achievements/:id/regenerate', adminAuth, (req, res) => {
     res.json({ imageSvg });
   });
 });
+
+// Unmatched API routes get a clean JSON 404 instead of falling through to the
+// SPA catch-all below (which would otherwise return index.html with a 200).
+// Must be registered after every real /api/* route and before the SPA
+// catch-all.
+app.all('/api/*', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
 // --- Serve React build (catch-all) ---
 app.get('*', (_req, res) => {

@@ -179,16 +179,90 @@ describe('auth: mustChangePassword (admin-forced rotation)', () => {
     assert.strictEqual(res.body.requiresPasswordChange, undefined);
   });
 
-  test('self-service password change via /api/profile also clears mustChangePassword (defensive)', async () => {
+  // UPDATED FOR R3: this used to assert that PATCH /api/profile (an
+  // authenticated route) could clear mustChangePassword using a session
+  // cookie that was issued BEFORE the flag was set. That is now exactly the
+  // stale-session hole R3 closes: once mustChangePassword is set, the auth
+  // middleware 401s that cookie on every authenticated route -- including
+  // /api/profile -- so it can no longer self-service the flag away. The only
+  // route that can still clear it is the no-auth /api/change-password (see
+  // "auth middleware: DB is authoritative over stale JWT claims" above).
+  test('PATCH /api/profile with a pre-flag session cookie is rejected once mustChangePassword is set (must use /api/change-password instead)', async () => {
     const u = h.createUser({ role: 'user' });
     db.prepare('UPDATE users SET mustChangePassword = 1 WHERE id = ?').run(u.id);
     const res = await agent
       .patch('/api/profile')
       .set('Cookie', u.cookie)
       .send({ password: 'freshchoice123' });
-    assert.strictEqual(res.status, 200);
-    const row = db.prepare('SELECT mustChangePassword, passwordChanged FROM users WHERE id = ?').get(u.id);
+    assert.strictEqual(res.status, 401);
+    const row = db.prepare('SELECT mustChangePassword FROM users WHERE id = ?').get(u.id);
+    assert.strictEqual(row.mustChangePassword, 1, 'flag must remain set -- the stale session cannot clear it');
+  });
+});
+
+// BUG FIX (R3): `auth` middleware used to trust `role` straight out of the JWT
+// payload and never re-checked that the user still existed. Two consequences:
+// (1) a deleted user's token kept working forever (until the 30-day expiry),
+// and (2) demoting a user did nothing until their token expired. The fix makes
+// the DB authoritative for `role` on every authenticated request, 401s tokens
+// for users that no longer exist, and 401s tokens for users currently flagged
+// `mustChangePassword` (so an admin-forced password reset actually invalidates
+// the attacker's existing session instead of being purely cosmetic).
+describe('auth middleware: DB is authoritative over stale JWT claims', () => {
+  test('token for a deleted user -> 401 on an authenticated route', async () => {
+    const u = h.createUser({ role: 'user' });
+    // Sanity: the cookie works before deletion.
+    const before = await agent.get('/api/profile').set('Cookie', u.cookie);
+    assert.strictEqual(before.status, 200);
+
+    db.prepare('DELETE FROM users WHERE id = ?').run(u.id);
+
+    const after = await agent.get('/api/profile').set('Cookie', u.cookie);
+    assert.strictEqual(after.status, 401);
+  });
+
+  test('user demoted from owner to user after their token was issued -> ownerAuth route now 403 (was 200)', async () => {
+    const owner = h.createUser({ role: 'owner' });
+    // Sanity: the owner-issued cookie satisfies ownerAuth before demotion.
+    const before = await agent.post('/api/players').set('Cookie', owner.cookie).send({ name: h.uniqueName('demote') });
+    assert.ok(before.status >= 200 && before.status < 300, `expected 2xx before demotion, got ${before.status}`);
+
+    db.prepare('UPDATE users SET role = ?, isAdmin = 0 WHERE id = ?').run('user', owner.id);
+
+    // Same (still-unexpired) cookie, now demoted in the DB -> ownerAuth must
+    // reject it based on current role, not the role baked into the JWT.
+    const after = await agent.post('/api/players').set('Cookie', owner.cookie).send({ name: h.uniqueName('demote2') });
+    assert.strictEqual(after.status, 403);
+  });
+
+  test('user flagged mustChangePassword -> 401 on an authenticated route, but CAN still complete /api/change-password and log in after', async () => {
+    const u = h.createUser({ role: 'user', password: 'staleflag123' });
+    // Sanity: works before being flagged.
+    const before = await agent.get('/api/profile').set('Cookie', u.cookie);
+    assert.strictEqual(before.status, 200);
+
+    db.prepare('UPDATE users SET mustChangePassword = 1 WHERE id = ?').run(u.id);
+
+    // Existing session cookie must now be rejected on authenticated routes --
+    // otherwise an admin's forced-rotation reset does not actually invalidate
+    // a compromised account's live session.
+    const flagged = await agent.get('/api/profile').set('Cookie', u.cookie);
+    assert.strictEqual(flagged.status, 401);
+
+    // The user must still be able to self-service rotate via the no-auth
+    // change-password endpoint -- this must NOT be blocked by the same check,
+    // or a flagged user would be permanently locked out.
+    const changeRes = await agent
+      .post('/api/change-password')
+      .send({ username: u.username, currentPassword: 'staleflag123', newPassword: 'freshflag123' });
+    assert.strictEqual(changeRes.status, 200);
+
+    const row = db.prepare('SELECT mustChangePassword FROM users WHERE id = ?').get(u.id);
     assert.strictEqual(row.mustChangePassword, 0);
-    assert.strictEqual(row.passwordChanged, 1);
+
+    // And can log in normally afterward.
+    const loginRes = await agent.post('/api/login').send({ username: u.username, password: 'freshflag123' });
+    assert.strictEqual(loginRes.status, 200);
+    assert.ok(loginRes.headers['set-cookie']?.some((c) => c.startsWith('auth_token=')));
   });
 });

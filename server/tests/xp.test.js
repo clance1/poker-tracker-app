@@ -67,4 +67,29 @@ describe('xp: admin config', () => {
     const after = db.prepare('SELECT value FROM xp_config WHERE key = ?').get('top_winner');
     assert.strictEqual(after.value, before.value);
   });
+
+  // BUG FIX (R5): PATCH iterated req.body's own keys and UPDATEd xp_config with
+  // no allowlist. Parameterized so not SQL-injectable, but a caller could send
+  // any arbitrary key name -- silently a no-op today (UPDATE ... WHERE key = ?
+  // just matches zero rows), but sloppy and worth rejecting explicitly. Each
+  // key in the body must exist in xp_config or the whole request 400s.
+  test('PATCH with an unknown key -> 400, and does not apply any of the valid keys in the same request', async () => {
+    const admin = h.createUser({ role: 'admin' });
+    const before = db.prepare('SELECT value FROM xp_config WHERE key = ?').get('play_game');
+    const res = await agent
+      .patch('/api/admin/xp-config')
+      .set('Cookie', admin.cookie)
+      .send({ play_game: before.value + 1, totally_not_a_real_key: 5 });
+    assert.strictEqual(res.status, 400);
+    const after = db.prepare('SELECT value FROM xp_config WHERE key = ?').get('play_game');
+    assert.strictEqual(after.value, before.value, 'valid key in the same request must not be applied when another key is invalid');
+  });
+
+  test('PATCH with only known keys -> 200 and applies the update (regression check)', async () => {
+    const admin = h.createUser({ role: 'admin' });
+    const res = await agent.patch('/api/admin/xp-config').set('Cookie', admin.cookie).send({ top_winner: 42 });
+    assert.strictEqual(res.status, 200);
+    const row = db.prepare('SELECT value FROM xp_config WHERE key = ?').get('top_winner');
+    assert.strictEqual(row.value, 42);
+  });
 });
