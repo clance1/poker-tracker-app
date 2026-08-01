@@ -315,8 +315,9 @@ app.post('/api/login', loginLimiter, async (req, res) => {
   const match = await bcrypt.compare(password, user.password_hash);
   if (!match) return res.status(401).json({ error: 'Invalid username or password.' });
   const role = user.role ?? (user.isAdmin ? 'admin' : 'user');
-  // Admin accounts with default password must rotate before receiving a session cookie
-  if (role === 'admin' && !user.passwordChanged) {
+  // Admin accounts with default password must rotate before receiving a session cookie.
+  // Any user whose password was just reset by an admin (mustChangePassword) must too.
+  if ((role === 'admin' && !user.passwordChanged) || user.mustChangePassword) {
     return res.json({ requiresPasswordChange: true });
   }
   const token = jwt.sign({ userId: user.id, username: user.username, role }, JWT_SECRET, { expiresIn: '30d' });
@@ -349,7 +350,7 @@ app.post('/api/change-password', async (req, res) => {
   if (currentPassword === newPassword)
     return res.status(400).json({ error: 'New password must differ from current password.' });
   const hash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-  db.prepare('UPDATE users SET password_hash = ?, passwordChanged = 1 WHERE id = ?').run(hash, user.id);
+  db.prepare('UPDATE users SET password_hash = ?, passwordChanged = 1, mustChangePassword = 0 WHERE id = ?').run(hash, user.id);
   const role = user.role ?? (user.isAdmin ? 'admin' : 'user');
   const token = jwt.sign({ userId: user.id, username: user.username, role }, JWT_SECRET, { expiresIn: '30d' });
   res.cookie('auth_token', token, COOKIE_OPTS);
@@ -394,6 +395,10 @@ app.patch('/api/profile', auth, async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters.' });
     sets.push('password_hash = ?');
     vals.push(await bcrypt.hash(req.body.password, BCRYPT_ROUNDS));
+    // A user choosing their own password (even if previously flagged by an
+    // admin reset) has satisfied the rotation requirement.
+    sets.push('passwordChanged = 1');
+    sets.push('mustChangePassword = 0');
   }
 
   let pendingTelegramLink = null;
@@ -517,6 +522,11 @@ app.patch('/api/users/:id', adminAuth, async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters.' });
     sets.push('password_hash = ?');
     vals.push(await bcrypt.hash(req.body.password, BCRYPT_ROUNDS));
+    // Force rotation on next login -- unless the admin is resetting their own
+    // password, in which case they already know it and shouldn't be flagged.
+    if (req.params.id !== req.user.userId) {
+      sets.push('mustChangePassword = 1');
+    }
   }
   if (req.body.firstName !== undefined) {
     sets.push('firstName = ?'); vals.push(sanitizeStr(req.body.firstName, 50) || null);
@@ -640,12 +650,20 @@ app.get('/api/games', auth, (req, res) => {
   res.json({ items: result });
 });
 
-// GET eligible owners (admin + owner roles) for new game owner picker
-app.get('/api/owners', ownerAuth, (req, res) => {
+// GET eligible owners (admin + owner roles) for new game owner picker.
+// Any authenticated user may read this (not just owner/admin) -- it's used by
+// every user's new-game owner-picker dropdown.
+app.get('/api/owners', auth, (req, res) => {
   const owners = db.prepare(
-    `SELECT id, username, firstName, lastName FROM users WHERE role IN ('admin','owner') ORDER BY username`
+    `SELECT id, username, firstName, lastName, avatarPath FROM users WHERE role IN ('admin','owner') ORDER BY username`
   ).all();
-  res.json({ owners });
+  res.json({
+    owners: owners.map((u) => ({
+      ...u,
+      displayName: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username,
+      avatarPath: u.avatarPath ?? null,
+    })),
+  });
 });
 
 app.post('/api/games', ownerAuth, (req, res) => {

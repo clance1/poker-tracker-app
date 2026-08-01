@@ -117,3 +117,78 @@ describe('auth: change-password', () => {
     assert.strictEqual(row.passwordChanged, 1);
   });
 });
+
+// BUG FIX: admin-forced password resets (PATCH /api/users/:id) must set a
+// dedicated `mustChangePassword` flag (distinct from the overloaded
+// `passwordChanged` column) so the target user is forced to rotate on their
+// next login, and /api/change-password clears it again once they do.
+describe('auth: mustChangePassword (admin-forced rotation)', () => {
+  test('admin resets another user\'s password -> forces rotation on next login; change-password clears the flag', async () => {
+    const admin = h.createUser({ role: 'admin' });
+    const b = h.createUser({ role: 'user', password: 'originalpw1' });
+
+    const patchRes = await agent
+      .patch(`/api/users/${b.id}`)
+      .set('Cookie', admin.cookie)
+      .send({ password: 'adminchosen1' });
+    assert.strictEqual(patchRes.status, 200);
+
+    const afterPatch = db.prepare('SELECT mustChangePassword FROM users WHERE id = ?').get(b.id);
+    assert.strictEqual(afterPatch.mustChangePassword, 1);
+
+    // B logs in with the admin-chosen password -> must be forced to rotate, no cookie.
+    const loginRes = await agent.post('/api/login').send({ username: b.username, password: 'adminchosen1' });
+    assert.strictEqual(loginRes.status, 200);
+    assert.deepStrictEqual(loginRes.body, { requiresPasswordChange: true });
+    assert.strictEqual(loginRes.headers['set-cookie'], undefined);
+
+    // B rotates via /api/change-password.
+    const changeRes = await agent
+      .post('/api/change-password')
+      .send({ username: b.username, currentPassword: 'adminchosen1', newPassword: 'brandnewpw1' });
+    assert.strictEqual(changeRes.status, 200);
+    assert.ok(changeRes.headers['set-cookie']?.some((c) => c.startsWith('auth_token=')));
+
+    const afterChange = db.prepare('SELECT mustChangePassword, passwordChanged FROM users WHERE id = ?').get(b.id);
+    assert.strictEqual(afterChange.mustChangePassword, 0);
+    assert.strictEqual(afterChange.passwordChanged, 1);
+
+    // B can now log in normally and gets a cookie.
+    const loginRes2 = await agent.post('/api/login').send({ username: b.username, password: 'brandnewpw1' });
+    assert.strictEqual(loginRes2.status, 200);
+    assert.ok(loginRes2.headers['set-cookie']?.some((c) => c.startsWith('auth_token=')));
+    assert.strictEqual(loginRes2.body.requiresPasswordChange, undefined);
+  });
+
+  test('admin resetting their OWN password via PATCH /api/users/:id does NOT set mustChangePassword', async () => {
+    const admin = h.createUser({ role: 'admin' });
+    const res = await agent
+      .patch(`/api/users/${admin.id}`)
+      .set('Cookie', admin.cookie)
+      .send({ password: 'selfchosen123' });
+    assert.strictEqual(res.status, 200);
+    const row = db.prepare('SELECT mustChangePassword FROM users WHERE id = ?').get(admin.id);
+    assert.strictEqual(row.mustChangePassword, 0);
+  });
+
+  test('normal user with mustChangePassword unset logs in normally (no regression)', async () => {
+    const u = h.createUser({ role: 'user', password: 'regularpw1' });
+    const res = await agent.post('/api/login').send({ username: u.username, password: 'regularpw1' });
+    assert.strictEqual(res.status, 200);
+    assert.ok(res.headers['set-cookie']?.some((c) => c.startsWith('auth_token=')));
+    assert.strictEqual(res.body.requiresPasswordChange, undefined);
+  });
+
+  test('self-service password change via /api/profile also clears mustChangePassword (defensive)', async () => {
+    const u = h.createUser({ role: 'user' });
+    db.prepare('UPDATE users SET mustChangePassword = 1 WHERE id = ?').run(u.id);
+    const res = await agent
+      .patch('/api/profile')
+      .set('Cookie', u.cookie)
+      .send({ password: 'freshchoice123' });
+    assert.strictEqual(res.status, 200);
+    const row = db.prepare('SELECT mustChangePassword, passwordChanged FROM users WHERE id = ?').get(u.id);
+    assert.strictEqual(row.mustChangePassword, 0);
+    assert.strictEqual(row.passwordChanged, 1);
+  });
+});

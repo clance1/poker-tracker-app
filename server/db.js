@@ -284,4 +284,9 @@ addCol('user_achievements', 'seen', 'INTEGER NOT NULL DEFAULT 1');
 // users: Telegram user ID for personal DM notifications
 addCol('users', 'telegramUserId', 'TEXT');
 
+// users: forced-rotation flag set when an admin resets someone else's password
+// via PATCH /api/users/:id (distinct from `passwordChanged`, which is already
+// overloaded by /api/register and seedAdmin's default-password bootstrap check)
+addCol('users', 'mustChangePassword', 'INTEGER NOT NULL DEFAULT 0');
+
 module.exports = db;
