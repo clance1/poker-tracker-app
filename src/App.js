@@ -543,6 +543,7 @@ function Leaderboard({ players }) {
   const [hiddenPlayers, setHiddenPlayers] = useState(new Set());
   const [achCounts, setAchCounts] = useState({});
   const [otherSort, setOtherSort] = useState({ key: "xp", dir: "desc" });
+  const [badges, setBadges] = useState({ winner: null, loser: null });
 
   const allGames = useMemo(() => {
     const map = {};
@@ -571,6 +572,7 @@ function Leaderboard({ players }) {
       const streak = calcStreak(allDone);
       return {
         id: p.id, name: p.name, avatarPath: p.avatarPath ?? null,
+        userId: p.userId ?? null,
         color: PLAYER_COLORS[ci % PLAYER_COLORS.length],
         xp: p.xp ?? 0,
         net, nets,
@@ -597,6 +599,12 @@ function Leaderboard({ players }) {
       setAchCounts(map);
     }).catch(() => {});
   }, [view]);
+
+  useEffect(() => {
+    apiFetch("/api/leaderboard/badges")
+      .then((data) => setBadges(data))
+      .catch(() => {});
+  }, [players]);
 
   const otherStats = useMemo(() => {
     return players
@@ -713,7 +721,19 @@ function Leaderboard({ players }) {
               <div className="lb-card-body">
                 <div className="lb-card-top">
                   <Avatar src={p.avatarPath} name={p.name} size={28} />
-                  <span className="lb-card-name">{p.name}</span>
+                  <span className="lb-card-name">
+                    {p.name}
+                    {badges.winner?.userId && p.userId === badges.winner.userId && (
+                      <span className="lb-badge lb-badge--crown" title={`Biggest winner last game${badges.winner.streak > 1 ? ` (${badges.winner.streak} in a row)` : ""}`}>
+                        👑{badges.winner.streak > 1 && <span className="lb-badge-streak"> x{badges.winner.streak}</span>}
+                      </span>
+                    )}
+                    {badges.loser?.userId && p.userId === badges.loser.userId && (
+                      <span className="lb-badge lb-badge--poop" title={`Biggest loser last game${badges.loser.streak > 1 ? ` (${badges.loser.streak} in a row)` : ""}`}>
+                        💩{badges.loser.streak > 1 && <span className="lb-badge-streak"> x{badges.loser.streak}</span>}
+                      </span>
+                    )}
+                  </span>
                   {streakLabel && (
                     <span className={"lb-streak " + streakCls} title={`${p.streak.count}-game ${p.streak.type === "W" ? "win" : "loss"} streak`}>
                       {p.streak.type === "W" ? "🔥" : "🧊"} {streakLabel}
@@ -732,8 +752,15 @@ function Leaderboard({ players }) {
                   <span className={p.avgNet >= 0 ? "profit" : "loss"}>
                     <span className="stat-label">avg</span> {p.avgNet >= 0 ? "+" : ""}{fmt(p.avgNet)}
                   </span>
-                  <span className="profit"><span className="stat-label">best</span> {fmt(p.best)}</span>
-                  <span className="loss"><span className="stat-label">worst</span> {fmt(p.worst)}</span>
+                  {/* Colour by the value, not by the label: a player who won every
+                      game has a positive worst, and one who lost every game has a
+                      negative best. */}
+                  <span className={p.best >= 0 ? "profit" : "loss"}>
+                    <span className="stat-label">best</span> {fmt(p.best)}
+                  </span>
+                  <span className={p.worst >= 0 ? "profit" : "loss"}>
+                    <span className="stat-label">worst</span> {fmt(p.worst)}
+                  </span>
                   <span className={p.roi >= 0 ? "profit" : "loss"}>
                     <span className="stat-label">ROI</span> {p.roi >= 0 ? "+" : ""}{p.roi.toFixed(0)}%
                   </span>
@@ -955,7 +982,8 @@ function GameHistory({ games, scheduledGames, onSelectGame, onNewGame, onSchedul
 export const nowTime = () => new Date().toTimeString().slice(0, 5);
 
 // --- New Game Modal ---
-const REBUY_PRESETS = [10, 20, 40];
+const REBUY_PRESETS = [20, 50, 100];
+const REBUY_DEFAULT = 50;
 
 function NewGameModal({ players, onClose, onCreate }) {
   const [date, setDate] = useState(todayISO());
@@ -1175,6 +1203,7 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
   const [addPlayerID, setAddPlayerID] = useState("");
   const [addBuyIn, setAddBuyIn] = useState("20");
   const [addError, setAddError] = useState("");
+  const [cashOutSaving, setCashOutSaving] = useState({});
 
   useEffect(() => {
     const initial = {};
@@ -1243,6 +1272,45 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
       setAddError(msg);
     }
     setSaving(false);
+  };
+
+  // Save a cash-out as soon as it's entered, so a player who leaves mid-game is
+  // logged as Cashed Out straight away instead of waiting for End Game. Blank
+  // clears it again, which undoes a mis-entry. Owner/admin only, enforced
+  // server-side as well.
+  const persistCashOut = async (gp, raw) => {
+    const trimmed = (raw ?? "").trim();
+    const value = trimmed === "" ? null : parseFloat(trimmed);
+    if (value !== null && (isNaN(value) || value < 0)) return;
+
+    const saved = gp.cashOut ?? null;
+    if (value === saved) return; // nothing changed, skip the round-trip
+
+    setCashOutSaving((prev) => ({ ...prev, [gp.id]: true }));
+    try {
+      await apiFetch("/api/game-players/" + gp.id, { method: "PUT", body: { cashOut: value } });
+      setGamePlayers((prev) => prev.map((p) => (p.id === gp.id ? { ...p, cashOut: value } : p)));
+    } catch (e) {
+      let msg = e.message;
+      try { msg = JSON.parse(e.message).error || msg; } catch {}
+      alert(msg);
+      // Put the field back to the last value the server accepted
+      setCashOuts((prev) => ({ ...prev, [gp.id]: saved === null ? "" : String(saved) }));
+    }
+    setCashOutSaving((prev) => ({ ...prev, [gp.id]: false }));
+  };
+
+  const handleRemovePlayer = async (gp) => {
+    const name = gp.player?.name ?? "this player";
+    if (!window.confirm(`Remove ${name} from this game?`)) return;
+    try {
+      await apiFetch(`/api/game-players/${gp.id}`, { method: "DELETE" });
+      setGamePlayers((prev) => prev.filter((p) => p.id !== gp.id));
+    } catch (e) {
+      let msg = e.message;
+      try { msg = JSON.parse(e.message).error || msg; } catch {}
+      alert(msg);
+    }
   };
 
   const availablePlayers = (allPlayers ?? []).filter(
@@ -1339,12 +1407,19 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
           );
         })()}
       </div>
-      <div className="players-table" style={{ marginTop: 16 }}>
-        <div className="table-head"><span>Player</span><span>Buy-In</span><span>Rebuys</span><span>Total In</span><span>Cash Out</span><span>Net</span></div>
+      <div className={"players-table" + ((isOwner || isAdmin) && !game.isComplete ? " players-table--with-actions" : "")} style={{ marginTop: 16 }}>
+        <div className="table-head"><span>Player</span><span>Buy-In</span><span>Rebuys</span><span>Total In</span><span>Cash Out</span><span>Net</span>{(isOwner || isAdmin) && !game.isComplete && <span></span>}</div>
         {gamePlayers.map((gp) => {
           const totalIn = gp.buyIn + (gp.rebuys ?? 0);
-          const co = game.isComplete ? gp.cashOut ?? 0 : (parseFloat(cashOuts[gp.id] ?? "") || null);
-          const net = co !== null ? co - totalIn : null;
+          // Server truth -- drives the Cashed Out badge. Busting out for $0 is
+          // still a cash-out, so test against null rather than falsiness.
+          const savedCashOut = gp.cashOut ?? null;
+          const hasCashedOut = savedCashOut !== null;
+          const savedNet = hasCashedOut ? savedCashOut - totalIn : null;
+          // Live input value -- drives the Net column while it's being typed.
+          const typed = String(cashOuts[gp.id] ?? "").trim();
+          const co = game.isComplete ? gp.cashOut ?? 0 : (typed === "" ? null : parseFloat(typed));
+          const net = co !== null && !isNaN(co) ? co - totalIn : null;
           const isRebuyOpen = rebuyOpen === gp.id;
           return (
             <React.Fragment key={gp.id}>
@@ -1352,6 +1427,14 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
                 <span className="player-cell">
                   <Avatar src={gp.player?.avatarPath} name={gp.player?.name} size={24} />
                   {gp.player?.name ?? "?"}
+                  {hasCashedOut && (
+                    <>
+                      <span className="cashed-out-badge">Cashed Out</span>
+                      <span className={savedNet > 0 ? "net-positive" : savedNet < 0 ? "net-negative" : "net-zero"}>
+                        {savedNet >= 0 ? "+" : ""}{fmt(savedNet)}
+                      </span>
+                    </>
+                  )}
                 </span>
                 <span>{fmt(gp.buyIn)}</span>
                 <span className="rebuy-cell">
@@ -1369,21 +1452,34 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
                 <span>{fmt(totalIn)}</span>
                 <span>
                   {game.isComplete ? fmt(gp.cashOut ?? 0) : (
-                    <input type="number" className="input cashout-input" placeholder="$0"
-                      value={cashOuts[gp.id] ?? ""} min="0"
-                      onChange={(e) => setCashOuts((prev) => ({ ...prev, [gp.id]: e.target.value }))} />
+                    (isOwner || isAdmin)
+                      ? <input type="number" className="input cashout-input" placeholder="$0"
+                          value={cashOuts[gp.id] ?? ""} min="0"
+                          disabled={!!cashOutSaving[gp.id]}
+                          title="Saved as soon as you leave this field"
+                          onChange={(e) => setCashOuts((prev) => ({ ...prev, [gp.id]: e.target.value }))}
+                          onBlur={(e) => persistCashOut(gp, e.target.value)} />
+                      : <span className="muted">--</span>
                   )}
                 </span>
                 <span className={net !== null ? (net >= 0 ? "profit" : "loss") : "muted"}>
                   {net !== null ? (net >= 0 ? "+" : "") + fmt(net) : "--"}
                 </span>
+                {(isOwner || isAdmin) && !game.isComplete && (
+                  <button
+                    className="btn-icon delete-btn remove-player-btn"
+                    title={`Remove ${gp.player?.name ?? "player"} from game`}
+                    onClick={() => handleRemovePlayer(gp)}
+                    disabled={saving}
+                  >✕</button>
+                )}
               </div>
               {isRebuyOpen && (
                 <div className="rebuy-drawer">
                   <span className="rebuy-drawer-label">Rebuy for <strong>{gp.player?.name}</strong></span>
                   <div className="rebuy-presets">
                     {REBUY_PRESETS.map((amt) => (
-                      <button key={amt} className="rebuy-preset-btn" onClick={() => confirmRebuy(gp, amt)}>+${amt}</button>
+                      <button key={amt} className={"rebuy-preset-btn" + (amt === REBUY_DEFAULT ? " rebuy-preset-default" : "")} onClick={() => confirmRebuy(gp, amt)}>+${amt}</button>
                     ))}
                   </div>
                   <div className="rebuy-custom-row">

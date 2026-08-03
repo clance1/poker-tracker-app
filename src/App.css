@@ -359,7 +359,32 @@ body {
   gap: 8px;
   flex-wrap: wrap;
 }
-.lb-card-name { font-size: 16px; font-weight: 700; flex: 1; }
+.lb-card-name { font-size: 16px; font-weight: 700; flex: 1; display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+
+/* Winner / loser badges */
+.lb-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  line-height: 1;
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.lb-badge--crown {
+  background: rgba(212, 175, 55, 0.15);
+  color: #d4af37;
+}
+.lb-badge--poop {
+  background: rgba(139, 90, 43, 0.18);
+  color: #a0672a;
+}
+.lb-badge-streak {
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.85;
+}
 .lb-card-net { font-size: 20px; font-weight: 800; margin-left: auto; }
 .lb-streak {
   font-size: 12px;
@@ -796,7 +821,11 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  /* Horizontal scroll container. On wide screens the columns fit and nothing
+     scrolls; on narrow ones the row overflows and the player column pins. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 
 .table-head, .table-row {
@@ -805,6 +834,24 @@ body {
   padding: 10px 16px;
   gap: 8px;
   align-items: center;
+}
+
+.players-table--with-actions .table-head,
+.players-table--with-actions .table-row {
+  grid-template-columns: 1fr 70px 90px 70px 100px 80px 36px;
+}
+
+.remove-player-btn {
+  opacity: 0.35;
+  color: var(--text-muted);
+  padding: 3px 6px;
+  font-size: 12px;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+.remove-player-btn:hover:not(:disabled) {
+  opacity: 1;
+  color: var(--loss);
+  background: #2d1b1b;
 }
 
 .table-head {
@@ -823,7 +870,22 @@ body {
 }
 .table-row:last-child { border-bottom: none; }
 
-.player-cell { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.player-cell { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.cashed-out-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(63, 185, 80, 0.15);
+  color: #3fb950;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.net-positive { color: #3fb950; font-weight: 700; font-size: 13px; }
+.net-negative { color: #f85149; font-weight: 700; font-size: 13px; }
+.net-zero     { color: var(--text-muted); font-weight: 700; font-size: 13px; }
 
 .rebuy-cell {
   display: flex;
@@ -978,6 +1040,7 @@ body {
   transition: all 0.15s;
 }
 .rebuy-preset-btn:hover { background: rgba(255,255,255,0.2); border-color: var(--gold); }
+.rebuy-preset-btn.rebuy-preset-default { background: rgba(212,175,55,0.18); border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
 
 .rebuy-custom-row {
   display: flex;
@@ -1044,11 +1107,45 @@ body {
 
 /* ─── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width: 600px) {
+  /* The columns cannot fit a phone viewport, so let the row overflow and
+     scroll rather than crushing the player name. The first column becomes a
+     fixed width (a sticky cell needs a stable one) and pins to the left. */
   .table-head, .table-row {
-    grid-template-columns: 1fr 60px 80px 60px 85px 70px;
+    grid-template-columns: 150px 60px 80px 60px 85px 70px;
+    min-width: max-content;
     font-size: 12px;
     padding: 8px 10px;
   }
+  .players-table--with-actions .table-head,
+  .players-table--with-actions .table-row {
+    grid-template-columns: 150px 60px 80px 60px 85px 70px 32px;
+  }
+
+  /* Lock the player column while the money columns scroll underneath it.
+     Needs an opaque background or the scrolling cells show through. */
+  .table-head > span:first-child,
+  .table-row > .player-cell {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    /* Hairline plus a soft shadow to signal there is more content to the right */
+    box-shadow: 1px 0 0 var(--border), 6px 0 6px -6px rgba(0, 0, 0, 0.55);
+  }
+  .table-head > span:first-child { background: var(--bg-surface); }
+  .table-row > .player-cell { background: var(--bg-card); }
+
+  /* The rebuy drawer sits inside the same scroller, so pin it too -- otherwise
+     its controls slide out of view once the table is scrolled right. */
+  .rebuy-drawer {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+  }
+
+  /* Keep the pinned cell narrow: let the name wrap instead of widening it. */
+  .player-cell { min-width: 0; }
+  .player-cell > span,
+  .cashed-out-badge { max-width: 100%; }
   .pot-amount { font-size: 28px; }
   .lb-summary-strip { grid-template-columns: repeat(2, 1fr); }
   .lb-card-net { font-size: 16px; }

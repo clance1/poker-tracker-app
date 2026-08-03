@@ -109,7 +109,11 @@ describe('game-players: update (PUT /api/game-players/:id)', () => {
     assert.strictEqual(res.status, 404);
   });
 
-  test('unrelated user (not linked, not owner/admin, not game owner) -> 403', async () => {
+  // Two distinct rules guard this route. Money fields (buyIn/cashOut) are
+  // restricted to admin / owner-role / game owner -- the linked player may not
+  // set their own cash-out. Everything else (rebuys) additionally allows the
+  // linked player. A bystander is refused either way.
+  test('unrelated user changing a money field -> 403', async () => {
     const owner = h.createUser({ role: 'owner' });
     const linkedUser = h.createUser({ role: 'user' });
     const player = h.createPlayer({ userId: linkedUser.id });
@@ -119,7 +123,29 @@ describe('game-players: update (PUT /api/game-players/:id)', () => {
     const bystander = h.createUser({ role: 'user' });
     const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', bystander.cookie).send({ buyIn: 25 });
     assert.strictEqual(res.status, 403);
+    assert.match(res.body.error, /can adjust buy-ins and cash-outs/);
+  });
+
+  test('unrelated user changing rebuys -> 403', async () => {
+    const linkedUser = h.createUser({ role: 'user' });
+    const player = h.createPlayer({ userId: linkedUser.id });
+    const game = h.createGame({});
+    const gp = h.createGamePlayer({ gameID: game.id, playerID: player.id, buyIn: 20, rebuys: 0 });
+
+    const bystander = h.createUser({ role: 'user' });
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', bystander.cookie).send({ rebuys: 20 });
+    assert.strictEqual(res.status, 403);
     assert.match(res.body.error, /not authorised/);
+  });
+
+  test('the linked player may NOT set their own cash-out -> 403', async () => {
+    const linkedUser = h.createUser({ role: 'user' });
+    const player = h.createPlayer({ userId: linkedUser.id });
+    const game = h.createGame({});
+    const gp = h.createGamePlayer({ gameID: game.id, playerID: player.id, buyIn: 20 });
+
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', linkedUser.cookie).send({ cashOut: 500 });
+    assert.strictEqual(res.status, 403);
   });
 
   test('the linked player themself can rebuy; rebuy triggers an XP penalty', async () => {
@@ -159,5 +185,103 @@ describe('game-players: update (PUT /api/game-players/:id)', () => {
     const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', admin.cookie).send({ buyIn: 99 });
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.buyIn, 99);
+  });
+});
+
+// Mid-game cash-out: an owner/admin can record a cash-out while the game is
+// still running, so a player who leaves early is logged as cashed out straight
+// away rather than at End Game.
+describe('game-players: mid-game cash-out', () => {
+  const setup = ({ ownerRole = 'owner' } = {}) => {
+    const owner = h.createUser({ role: ownerRole });
+    const player = h.createPlayer({});
+    const game = h.createGame({ ownerId: owner.id, isComplete: false });
+    const gp = h.createGamePlayer({ gameID: game.id, playerID: player.id, buyIn: 20, rebuys: 10 });
+    return { owner, player, game, gp };
+  };
+  const rowFor = (id) => db.prepare('SELECT cashOut FROM game_players WHERE id = ?').get(id);
+  const gameRow = (id) => db.prepare('SELECT isComplete FROM games WHERE id = ?').get(id);
+
+  test('owner records a cash-out mid-game; it persists and the game stays open', async () => {
+    const { owner, game, gp } = setup();
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: 75 });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.cashOut, 75);
+    assert.strictEqual(rowFor(gp.id).cashOut, 75);
+    // Recording a cash-out must not end the game
+    assert.strictEqual(gameRow(game.id).isComplete, 0);
+  });
+
+  test('admin can record a cash-out for any game', async () => {
+    const admin = h.createUser({ role: 'admin' });
+    const { gp } = setup();
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', admin.cookie).send({ cashOut: 40 });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(rowFor(gp.id).cashOut, 40);
+  });
+
+  test('a $0 bust-out is stored as 0, not null -- it is still a cash-out', async () => {
+    const { owner, gp } = setup();
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: 0 });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(rowFor(gp.id).cashOut, 0);
+    assert.notStrictEqual(rowFor(gp.id).cashOut, null);
+  });
+
+  test('a cash-out can be corrected without clearing it', async () => {
+    const { owner, gp } = setup();
+    await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: 75 });
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: 105 });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(rowFor(gp.id).cashOut, 105);
+  });
+
+  test('null clears a mis-entered cash-out back to not-cashed-out', async () => {
+    const { owner, gp } = setup();
+    await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: 75 });
+    assert.strictEqual(rowFor(gp.id).cashOut, 75);
+
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: null });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(rowFor(gp.id).cashOut, null);
+  });
+
+  test('empty string also clears it', async () => {
+    const { owner, gp } = setup();
+    await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: 50 });
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: '' });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(rowFor(gp.id).cashOut, null);
+  });
+
+  test('a non-numeric cash-out is rejected rather than stored as NaN', async () => {
+    const { owner, gp } = setup();
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: 'abc' });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(rowFor(gp.id).cashOut, null);
+  });
+
+  test('a negative cash-out is rejected', async () => {
+    const { owner, gp } = setup();
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: -10 });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(rowFor(gp.id).cashOut, null);
+  });
+
+  test('a bystander cannot record a cash-out', async () => {
+    const { gp } = setup();
+    const bystander = h.createUser({ role: 'user' });
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', bystander.cookie).send({ cashOut: 75 });
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(rowFor(gp.id).cashOut, null);
+  });
+
+  test('other fields are untouched when only cashOut is sent', async () => {
+    const { owner, gp } = setup();
+    await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: 75 });
+    const row = db.prepare('SELECT buyIn, rebuys FROM game_players WHERE id = ?').get(gp.id);
+    assert.strictEqual(row.buyIn, 20);
+    assert.strictEqual(row.rebuys, 10);
   });
 });

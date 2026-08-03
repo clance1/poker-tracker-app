@@ -866,17 +866,32 @@ app.put('/api/game-players/:id', auth, (req, res) => {
   if (!gp) return res.status(404).json({ error: 'Not found' });
 
   const isAdmin = req.user.role === 'admin';
-  const isOwner = req.user.role === 'owner' || req.user.role === 'admin';
+  const isOwnerRole = req.user.role === 'owner';
   const isLinkedPlayer = gp.linkedUserId && gp.linkedUserId === req.user.userId;
   const isGameOwner = gp.gameOwnerId && gp.gameOwnerId === req.user.userId;
 
-  if (!isLinkedPlayer && !isOwner && !isGameOwner) {
+  // buy-in or cash-out changes: only admin, owner-role users, or the game owner
+  if ((req.body.buyIn !== undefined || req.body.cashOut !== undefined) && !isAdmin && !isOwnerRole && !isGameOwner) {
+    return res.status(403).json({ error: 'Only the game owner or an admin can adjust buy-ins and cash-outs' });
+  }
+
+  // all other changes (e.g. rebuys): allow linked player, game owner, owner-role, or admin
+  if (!isLinkedPlayer && !isAdmin && !isOwnerRole && !isGameOwner) {
     return res.status(403).json({ error: 'You are not authorised to update this record.' });
   }
 
   const buyIn = req.body.buyIn !== undefined ? parseFloat(req.body.buyIn) : gp.buyIn;
   const rebuys = req.body.rebuys !== undefined ? parseFloat(req.body.rebuys) : gp.rebuys;
-  const cashOut = req.body.cashOut !== undefined ? parseFloat(req.body.cashOut) : gp.cashOut;
+  // An explicit null/'' clears the cash-out, which undoes a mis-entered
+  // mid-game cash-out. parseFloat(null) is NaN, so it needs handling here.
+  const clearsCashOut = req.body.cashOut === null || req.body.cashOut === '';
+  const cashOut = req.body.cashOut !== undefined
+    ? (clearsCashOut ? null : parseFloat(req.body.cashOut))
+    : gp.cashOut;
+  if (cashOut !== null && isNaN(cashOut))
+    return res.status(400).json({ error: 'Cash-out must be a number.' });
+  if (cashOut !== null && cashOut < 0)
+    return res.status(400).json({ error: 'Cash-out cannot be negative.' });
   try {
     const row = db.prepare(
       'SELECT p.name FROM game_players gp JOIN players p ON gp.playerID = p.id WHERE gp.id = ?'
@@ -890,7 +905,9 @@ app.put('/api/game-players/:id', auth, (req, res) => {
           if (penalty !== 0) awardXP(gp.linkedUserId, penalty, 'Additional buy-in', gp.gameID);
         }
       }
-      if (req.body.cashOut !== undefined && gp.cashOut == null) {
+      // Announce only the first time a player actually cashes out -- not on a
+      // later correction, and not when the cash-out is being cleared.
+      if (req.body.cashOut !== undefined && !clearsCashOut && gp.cashOut == null) {
         telegramBroadcast(`💰 <b>${row.name}</b> cashed out $${parseFloat(req.body.cashOut).toFixed(0)}`);
       }
     }
@@ -898,6 +915,30 @@ app.put('/api/game-players/:id', auth, (req, res) => {
   db.prepare('UPDATE game_players SET buyIn = ?, rebuys = ?, cashOut = ? WHERE id = ?')
     .run(buyIn, rebuys, cashOut, req.params.id);
   res.json({ id: req.params.id, buyIn, rebuys, cashOut });
+});
+
+app.delete('/api/game-players/:id', auth, (req, res) => {
+  const gp = db.prepare(`
+    SELECT gp.*, g.ownerId as gameOwnerId, g.isComplete as gameIsComplete
+    FROM game_players gp
+    JOIN games g ON gp.gameID = g.id
+    WHERE gp.id = ?
+  `).get(req.params.id);
+  if (!gp) return res.status(404).json({ error: 'Not found' });
+
+  const isAdmin = req.user.role === 'admin';
+  const isGameOwner = gp.gameOwnerId && gp.gameOwnerId === req.user.userId;
+
+  if (!isAdmin && !isGameOwner) {
+    return res.status(403).json({ error: 'Only the game owner or an admin can remove players.' });
+  }
+
+  if (gp.gameIsComplete) {
+    return res.status(400).json({ error: 'Cannot remove a player from a completed game.' });
+  }
+
+  db.prepare('DELETE FROM game_players WHERE id = ?').run(req.params.id);
+  res.json({ success: true, message: 'Player removed from game' });
 });
 
 // ── Rules ──────────────────────────────────────────────────────────────────
@@ -1753,6 +1794,62 @@ app.post('/api/achievements/:id/regenerate', adminAuth, (req, res) => {
 
     db.prepare('UPDATE achievements SET imageSvg = ? WHERE id = ?').run(imageSvg, req.params.id);
     res.json({ imageSvg });
+  });
+});
+
+// --- Leaderboard Badges ---
+app.get('/api/leaderboard/badges', auth, (req, res) => {
+  const completedGames = db.prepare(
+    'SELECT id FROM games WHERE isComplete = 1 ORDER BY date DESC, createdAt DESC'
+  ).all();
+
+  if (!completedGames.length) return res.json({ winner: null, loser: null });
+
+  // Returns winner/loser userId+net for a game (linked users only)
+  const getGameEdges = (gameId) => {
+    const gps = db.prepare(`
+      SELECT gp.buyIn, gp.rebuys, gp.cashOut, p.userId
+      FROM game_players gp
+      JOIN players p ON gp.playerID = p.id
+      WHERE gp.gameID = ? AND gp.cashOut IS NOT NULL AND p.userId IS NOT NULL
+    `).all(gameId);
+    if (!gps.length) return { winnerId: null, winnerNet: null, loserId: null, loserNet: null };
+    const rows = gps.map(gp => ({ userId: gp.userId, net: (gp.cashOut || 0) - gp.buyIn - (gp.rebuys || 0) }));
+    const maxNet = Math.max(...rows.map(r => r.net));
+    const minNet = Math.min(...rows.map(r => r.net));
+    return {
+      winnerId: rows.find(r => r.net === maxNet)?.userId ?? null,
+      winnerNet: maxNet,
+      loserId: rows.find(r => r.net === minNet)?.userId ?? null,
+      loserNet: minNet,
+    };
+  };
+
+  const { winnerId, winnerNet, loserId, loserNet } = getGameEdges(completedGames[0].id);
+  if (!winnerId && !loserId) return res.json({ winner: null, loser: null });
+
+  // Count consecutive recent games where the same user held the top/bottom position
+  let winnerStreak = 0;
+  if (winnerId) {
+    for (const g of completedGames) {
+      if (getGameEdges(g.id).winnerId === winnerId) winnerStreak++;
+      else break;
+    }
+  }
+  let loserStreak = 0;
+  if (loserId) {
+    for (const g of completedGames) {
+      if (getGameEdges(g.id).loserId === loserId) loserStreak++;
+      else break;
+    }
+  }
+
+  const winnerUser = winnerId ? db.prepare('SELECT username FROM users WHERE id = ?').get(winnerId) : null;
+  const loserUser  = loserId  ? db.prepare('SELECT username FROM users WHERE id = ?').get(loserId)  : null;
+
+  res.json({
+    winner: winnerId ? { userId: winnerId, username: winnerUser?.username ?? null, net: winnerNet, streak: winnerStreak } : null,
+    loser:  loserId  ? { userId: loserId,  username: loserUser?.username  ?? null, net: loserNet,  streak: loserStreak  } : null,
   });
 });
 
