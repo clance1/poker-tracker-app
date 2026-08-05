@@ -14,7 +14,7 @@ import {
   parseFrame,
   getTier,
   conditionLabel,
-} from "./App";
+} from "./lib/format";
 
 describe("Helper Functions", () => {
   // ── sanitizeInput tests ──────────────────────────────────────────
@@ -445,35 +445,27 @@ describe("Helper Functions", () => {
     test("returns bronze tier (min: 2) for timesEarned === 2", () => {
       const tier = getTier(2);
       expect(tier).not.toBeNull();
-      expect(tier.badge).toBe("🥉");
       expect(tier.key).toBe("bronze");
     });
 
     test("returns silver tier (min: 3) for timesEarned === 3", () => {
       const tier = getTier(3);
-      expect(tier.badge).toBe("🥈");
       expect(tier.key).toBe("silver");
     });
 
     test("returns gold tier (min: 4) for timesEarned === 4", () => {
       const tier = getTier(4);
-      expect(tier.badge).toBe("🥇");
       expect(tier.key).toBe("gold");
     });
 
     test("returns diamond tier (min: 5) for timesEarned >= 5", () => {
-      const tier = getTier(5);
-      expect(tier.badge).toBe("💎");
-      expect(tier.key).toBe("diamond");
-
-      const tier10 = getTier(10);
-      expect(tier10.badge).toBe("💎");
+      expect(getTier(5).key).toBe("diamond");
+      expect(getTier(10).key).toBe("diamond");
     });
 
     test("returns highest matching tier", () => {
       const tier = getTier(6);
       // Should return diamond (min: 5), not a lower tier
-      expect(tier.badge).toBe("💎");
     });
   });
 

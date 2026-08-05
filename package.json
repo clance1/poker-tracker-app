@@ -6,6 +6,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.54.0",
     "@google/generative-ai": "^0.24.1",
+    "@phosphor-icons/react": "^2.1.10",
     "@testing-library/jest-dom": "^5.14.1",
     "@testing-library/react": "^13.0.0",
     "@testing-library/user-event": "^13.2.1",
@@ -32,8 +33,9 @@
   "scripts": {
     "start": "concurrently \"node server/index.js\" \"react-scripts start\"",
     "server": "node server/index.js",
-    "build": "react-scripts build",
+    "build": "npm run lint:tokens && react-scripts build",
     "serve": "node server/index.js",
+    "lint:tokens": "node scripts/lint-tokens.js",
     "test": "react-scripts test",
     "test:server": "node --test server/tests/",
     "eject": "react-scripts eject"
