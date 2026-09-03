@@ -62,7 +62,9 @@ function AchievementsTab({ isAdmin, onPreviewToast }) {
       {/* Admin: pending recommendations */}
       {isAdmin && recommendations.length > 0 && (
         <div className="achievements-section">
-          <div className="achievements-section-title">Pending Suggestions ({recommendations.length})</div>
+          <h3 className="achievements-section-title">
+            Pending Suggestions <span className="achievements-count">{recommendations.length}</span>
+          </h3>
           <div className="pending-rec-list">
             {recommendations.map((r) => (
               <div key={r.id} className="user-assignment-row pending-rec-row">
@@ -81,9 +83,11 @@ function AchievementsTab({ isAdmin, onPreviewToast }) {
       {/* Earned */}
       {earned.length > 0 && (
         <div className="achievements-section">
-          <div className="achievements-section-title">Earned — {earned.length}</div>
+          <h3 className="achievements-section-title">
+            Earned <span className="achievements-count">{earned.length}</span>
+          </h3>
           <div className="joker-cards-grid">
-            {earned.map((a) => (
+            {earned.map((a, i) => (
               <JokerCard
                 key={a.id}
                 achievement={a}
@@ -93,6 +97,7 @@ function AchievementsTab({ isAdmin, onPreviewToast }) {
                 isAdmin={isAdmin}
                 onEdit={setEditTarget}
                 onPreviewToast={onPreviewToast}
+                staggerIndex={i}
               />
             ))}
           </div>
@@ -102,9 +107,11 @@ function AchievementsTab({ isAdmin, onPreviewToast }) {
       {/* Locked */}
       {locked.length > 0 && (
         <div className="achievements-section">
-          <div className="achievements-section-title">Locked — {locked.length}</div>
+          <h3 className="achievements-section-title">
+            Locked <span className="achievements-count">{locked.length}</span>
+          </h3>
           <div className="joker-cards-grid">
-            {locked.map((a) => (
+            {locked.map((a, i) => (
               <JokerCard
                 key={a.id}
                 achievement={a}
@@ -113,6 +120,7 @@ function AchievementsTab({ isAdmin, onPreviewToast }) {
                 isAdmin={isAdmin}
                 onEdit={setEditTarget}
                 onPreviewToast={onPreviewToast}
+                staggerIndex={i}
               />
             ))}
           </div>
@@ -122,7 +130,11 @@ function AchievementsTab({ isAdmin, onPreviewToast }) {
       {achievements.length === 0 && (
         <div className="empty-state">
           <Trophy className="empty-icon" weight="fill" size={48} />
-          <p>No achievements yet.</p>
+          <div className="empty-title">No achievements yet</div>
+          <p>
+            Achievements are awarded automatically when a game ends. An admin can
+            add the first one, or anyone can suggest one with the button above.
+          </p>
         </div>
       )}
 

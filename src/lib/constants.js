@@ -5,6 +5,16 @@ export const ROLE_CLASS = { admin: "badge-admin", owner: "badge-owner", user: "b
 
 export const PLAYER_COLORS = ["#d4af37","#3fb950","#58a6ff","#f85149","#a855f7","#f97316","#06b6d4","#ec4899"];
 
+// Unique color per player, however many there are. The first few reuse the
+// curated PLAYER_COLORS hex values; beyond that, hues are spaced by the
+// golden angle so additional players stay visually distinct without ever
+// repeating a color (unlike a plain PLAYER_COLORS[i % length] wrap-around).
+export const getPlayerColor = (index) => {
+  if (index < PLAYER_COLORS.length) return PLAYER_COLORS[index];
+  const hue = (index * 137.508) % 360;
+  return `hsl(${hue.toFixed(1)}, 65%, 55%)`;
+};
+
 export const REBUY_PRESETS = [20, 50, 100];
 export const REBUY_DEFAULT = 50;
 

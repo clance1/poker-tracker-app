@@ -37,9 +37,9 @@ function CriteriaEditor({ value, onChange }) {
         <select className="input criteria-select"
           value={criteria.scope}
           onChange={(e) => setScope(e.target.value)}>
-          <option value="game">Game — evaluated when a game completes</option>
-          <option value="streak">Streak — consecutive games</option>
-          <option value="profile">Profile — awarded on profile actions</option>
+          <option value="game">Game: evaluated when a game completes</option>
+          <option value="streak">Streak: consecutive games</option>
+          <option value="profile">Profile: awarded on profile actions</option>
         </select>
       </div>
 

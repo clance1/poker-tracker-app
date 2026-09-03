@@ -3,17 +3,22 @@ import { getTier } from "../../lib/format";
 import AchievementImage from "./AchievementImage";
 import { Cards, Check, Diamond, Lock, Medal, PencilSimple, Play } from "../icons";
 
-function JokerCard({ achievement, earned, earnedAt, timesEarned = 1, isAdmin, onEdit, onPreviewToast }) {
+function JokerCard({ achievement, earned, earnedAt, timesEarned = 1, isAdmin, onEdit, onPreviewToast, staggerIndex = 0 }) {
   const colorIdx = achievement.name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % SUIT_COLORS.length;
   const accentColor = SUIT_COLORS[colorIdx];
   const tier = earned ? getTier(timesEarned) : null;
 
   return (
-    <div className={
-      "joker-achievement-card" +
-      (earned ? " joker-earned" : " joker-locked") +
-      (tier ? ` joker-tier-${tier.key}` : "")
-    }>
+    <div
+      // Position in the grid drives the reveal delay. Capped so a large
+      // collection does not leave the last card waiting seconds to appear.
+      style={{ "--stagger-index": Math.min(staggerIndex, 12) }}
+      className={
+        "joker-achievement-card" +
+        (earned ? " joker-earned" : " joker-locked") +
+        (tier ? ` joker-tier-${tier.key}` : "")
+      }
+    >
       {!earned && <div className="joker-lock-overlay"><Lock weight="fill" size={20} /></div>}
       {tier && (
         <div className="joker-tier-badge">

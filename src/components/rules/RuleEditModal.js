@@ -91,7 +91,7 @@ function RuleEditModal({ rule, onClose, onSaved }) {
           <input className="input" value={form.gameName} maxLength={100}
             onChange={(e) => set("gameName", e.target.value)} placeholder="e.g. Hold'Em, Omaha" />
 
-          <label className="rule-form-label">Overview <span className="rule-form-optional">(1–2 sentence summary shown at the top)</span></label>
+          <label className="rule-form-label">Overview <span className="rule-form-optional">(1-2 sentence summary shown at the top)</span></label>
           <textarea className="input rule-textarea" value={form.overview} maxLength={500}
             rows={2} onChange={(e) => set("overview", e.target.value)}
             placeholder="e.g. Community card game where each player gets 2 hole cards and shares 5 board cards to make the best 5-card hand." />
@@ -137,7 +137,7 @@ function RuleEditModal({ rule, onClose, onSaved }) {
 
           <label className="rule-form-label">
             How to Play
-            <span className="rule-form-optional"> — add each step; toggle BET for betting rounds</span>
+            <span className="rule-form-optional">: add each step, toggle BET for betting rounds</span>
           </label>
           <div className="step-builder">
             {steps.map((step, i) => (

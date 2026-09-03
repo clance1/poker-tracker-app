@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from "react";
 import { apiFetch } from "../lib/api";
-import { PLAYER_COLORS } from "../lib/constants";
+import { getPlayerColor } from "../lib/constants";
 import { calcNet, calcStreak, fmt, fmtDateShort } from "../lib/format";
 import Avatar from "./Avatar";
 import { CaretDown, CaretUp, CaretUpDown, Lightning, Medal, Trophy } from "./icons";
@@ -45,7 +45,7 @@ function Leaderboard({ players }) {
       return {
         id: p.id, name: p.name, avatarPath: p.avatarPath ?? null,
         userId: p.userId ?? null,
-        color: PLAYER_COLORS[ci % PLAYER_COLORS.length],
+        color: getPlayerColor(ci),
         xp: p.xp ?? 0,
         net, nets,
         gamesPlayed: inPeriod.length,
@@ -86,7 +86,7 @@ function Leaderboard({ players }) {
         userId: p.userId,
         name: p.name,
         avatarPath: p.avatarPath ?? null,
-        color: PLAYER_COLORS[ci % PLAYER_COLORS.length],
+        color: getPlayerColor(ci),
         xp: p.xp ?? 0,
         achievementCount: achCounts[p.userId] ?? 0,
         gamesPlayed: (p.games?.items ?? []).filter((gp) => gp.game?.isComplete).length,
@@ -160,10 +160,18 @@ function Leaderboard({ players }) {
       )}
 
       {view === "game" && players.length === 0 && (
-        <div className="empty-state"><div className="empty-icon">♠</div><p>No players yet. Add some in the Players tab.</p></div>
+        <div className="empty-state">
+          <div className="empty-icon">♠</div>
+          <div className="empty-title">No players yet</div>
+          <p>Add the people you play with in the Players tab, then start a game to see standings here.</p>
+        </div>
       )}
       {view === "game" && players.length > 0 && allGames.length === 0 && (
-        <div className="empty-state"><div className="empty-icon">♣</div><p>No completed games yet.</p></div>
+        <div className="empty-state">
+          <div className="empty-icon">♣</div>
+          <div className="empty-title">No completed games yet</div>
+          <p>Standings appear once a game has been ended and everyone has cashed out.</p>
+        </div>
       )}
 
       {view === "game" && players.length > 0 && allGames.length > 0 && <>
@@ -331,7 +339,8 @@ function Leaderboard({ players }) {
           })}
           {sortedOtherStats.length === 0 && (
             <div className="empty-state empty-state-compact">
-              <p>No linked player accounts yet.</p>
+              <div className="empty-title">No linked accounts yet</div>
+              <p>XP and achievements are tracked per account. Players linked to an app account show up here.</p>
             </div>
           )}
         </div>

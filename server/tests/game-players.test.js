@@ -83,7 +83,7 @@ describe('game-players: create (POST /api/game-players)', () => {
     assert.strictEqual(res.status, 200);
   });
 
-  test('valid create -> 200 {id, gameID, playerID, buyIn, rebuys}', async () => {
+  test('valid create -> 200 {id, gameID, playerID, buyIn, rebuys, timeIn}', async () => {
     const u = h.createUser({ role: 'owner' });
     const player = h.createPlayer({});
     const game = h.createGame({ ownerId: u.id });
@@ -92,8 +92,24 @@ describe('game-players: create (POST /api/game-players)', () => {
       .set('Cookie', u.cookie)
       .send({ gameID: game.id, playerID: player.id, buyIn: 30 });
     assert.strictEqual(res.status, 200);
-    assert.deepStrictEqual(Object.keys(res.body).sort(), ['buyIn', 'gameID', 'id', 'playerID', 'rebuys']);
+    assert.deepStrictEqual(Object.keys(res.body).sort(), ['buyIn', 'gameID', 'id', 'playerID', 'rebuys', 'timeIn']);
     assert.strictEqual(res.body.rebuys, 0);
+    // The game's timer hasn't been started yet, so this buy-in doesn't get a
+    // Time In until the owner presses "Start Timer".
+    assert.strictEqual(res.body.timeIn, null);
+  });
+
+  test('buy-in after the timer has started gets an immediate timeIn', async () => {
+    const u = h.createUser({ role: 'owner' });
+    const player = h.createPlayer({});
+    const game = h.createGame({ ownerId: u.id });
+    await agent.post(`/api/games/${game.id}/start-timer`).set('Cookie', u.cookie);
+    const res = await agent
+      .post('/api/game-players')
+      .set('Cookie', u.cookie)
+      .send({ gameID: game.id, playerID: player.id, buyIn: 30 });
+    assert.strictEqual(res.status, 200);
+    assert.match(res.body.timeIn, /^\d{2}:\d{2}$/);
   });
 });
 

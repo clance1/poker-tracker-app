@@ -19,9 +19,10 @@ const CSS = path.join(SRC, "App.css");
 // Tokens set at runtime on an element's style attribute rather than in :root.
 // Each must be genuinely written by a component; keep this list short.
 const RUNTIME_TOKENS = new Set([
-  "--pc",            // Leaderboard: per-player toggle colour
-  "--avatar-size",   // Avatar: per-instance diameter
-  "--joker-accent",  // JokerCard: per-achievement accent
+  "--pc",             // Leaderboard: per-player toggle colour
+  "--avatar-size",    // Avatar: per-instance diameter
+  "--joker-accent",   // JokerCard: per-achievement accent
+  "--stagger-index",  // JokerCard: grid position, drives reveal delay
 ]);
 
 const css = fs.readFileSync(CSS, "utf8");

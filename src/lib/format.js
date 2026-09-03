@@ -58,18 +58,48 @@ export const parseHands = (raw) => {
   return raw.split(/->|›|\n/).map((s) => s.replace(/^\d+\.\s*/, "").trim()).filter(Boolean);
 };
 
-// Parse imageFrame JSON safely. New format: { x, y, scale } where x/y are
-// fractional offsets from center (-1..1). Legacy posX/posY (0-100%) converted.
+// Achievement art framing.
+//
+// Current format: { px, py, scale } where px/py are object-position percentages
+// (0-100, 50/50 = centred) and scale is a zoom factor >= 1. Both are expressed
+// relative to the container, so one saved frame produces an identical crop at
+// any size: the 320px framing tool, the 148px preview, and the ~170px or ~288px
+// grid card all agree.
+//
+// Two older formats are migrated on read:
+//   v2 { x, y, scale }       fractional offsets from centre. These were applied
+//                            as percentages of the container against an image
+//                            sized in intrinsic pixels, so the crop changed with
+//                            container width. The conversion below is a best
+//                            approximation; there is no exact one, because the
+//                            stored numbers did not describe a single crop.
+//   v1 { posX, posY, scale } already percentages, so they map straight across.
+const clampPct = (n) => Math.min(100, Math.max(0, Number.isFinite(n) ? n : 50));
+const clampScale = (n) => Math.min(4, Math.max(1, Number.isFinite(n) ? n : 1));
+
 export function parseFrame(raw) {
-  const def = { x: 0, y: 0, scale: 1 };
+  const def = { px: 50, py: 50, scale: 1 };
   if (!raw) return def;
   try {
     const p = JSON.parse(raw);
-    if ('posX' in p || 'posY' in p) {
-      // Migrate old slider format
-      return { x: ((p.posX ?? 50) - 50) / 100, y: ((p.posY ?? 50) - 50) / 100, scale: p.scale ?? 1 };
+    if (p === null || typeof p !== 'object') return def;
+    if ('px' in p || 'py' in p) {
+      return { px: clampPct(p.px), py: clampPct(p.py), scale: clampScale(p.scale) };
     }
-    return { ...def, ...p };
+    if ('x' in p || 'y' in p) {
+      // Positive x shifted the image right, which reveals more of its left side,
+      // so the crop anchor moves toward 0.
+      return {
+        px: clampPct(50 - (p.x ?? 0) * 50),
+        py: clampPct(50 - (p.y ?? 0) * 50),
+        scale: clampScale(p.scale),
+      };
+    }
+    if ('posX' in p || 'posY' in p) {
+      return { px: clampPct(p.posX), py: clampPct(p.posY), scale: clampScale(p.scale) };
+    }
+    // No recognised position keys, but a zoom may still be worth keeping.
+    return { ...def, scale: clampScale(p.scale) };
   } catch { return def; }
 }
 

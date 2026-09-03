@@ -59,7 +59,7 @@ function DirectImageUpload({ achievementId, currentSrc, frame, uploading, setUpl
               <ImageFramer src={currentSrc} frame={frame} onChange={onFrameChange} />
               <button
                 className="btn btn-ghost btn-sm framer-reset-btn"
-                onClick={() => onFrameChange({ x: 0, y: 0, scale: 1 })}
+                onClick={() => onFrameChange({ px: 50, py: 50, scale: 1 })}
               >
                 Reset framing
               </button>
@@ -75,7 +75,7 @@ function DirectImageUpload({ achievementId, currentSrc, frame, uploading, setUpl
                   <AchievementImage src={currentSrc} imageFrame={JSON.stringify(frame)} />
                 </div>
                 <div className="joker-card-footer">
-                  <div className="joker-achievement-name">{previewName || "—"}</div>
+                  <div className="joker-achievement-name">{previewName || "-"}</div>
                   {previewDesc && (
                     <div className="joker-achievement-desc clamp-2">
                       {previewDesc}
@@ -312,9 +312,9 @@ function EditAchievementModal({ achievement, onClose, onSaved }) {
                   )}
                 </div>
                 <div className="joker-card-footer">
-                  <div className="joker-achievement-name">{name || "—"}</div>
+                  <div className="joker-achievement-name">{name || "-"}</div>
                   <div className="joker-achievement-desc clamp-2">
-                    {description || "—"}
+                    {description || "-"}
                   </div>
                 </div>
               </div>

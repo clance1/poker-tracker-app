@@ -19,6 +19,9 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
   const [addBuyIn, setAddBuyIn] = useState("20");
   const [addError, setAddError] = useState("");
   const [cashOutSaving, setCashOutSaving] = useState({});
+  const [timerStarted, setTimerStarted] = useState(!!game.timerStarted);
+  const [timerSaving, setTimerSaving] = useState(false);
+  const [timerError, setTimerError] = useState("");
 
   useEffect(() => {
     const initial = {};
@@ -28,9 +31,15 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
     setCashOuts(initial);
     setGamePlayers(game.players?.items ?? []);
     setNotes(game.notes ?? "");
+    setTimerStarted(!!game.timerStarted);
   }, [game]);
 
   const pot = totalPot(gamePlayers);
+  // For an active game, money paid out on cash-out is no longer "in the pot" --
+  // it's been taken off the table. Completed games keep the full pot since
+  // every cash-out has already been reconciled against it.
+  const cashedOutSoFar = gamePlayers.reduce((s, gp) => s + (gp.cashOut ?? 0), 0);
+  const displayPot = game.isComplete ? pot : pot - cashedOutSoFar;
 
   const openRebuy = (gpId) => { setRebuyOpen(gpId); setRebuyCustom(""); };
   const closeRebuy = () => setRebuyOpen(null);
@@ -79,7 +88,7 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
         body: { gameID: game.id, playerID: addPlayerID, buyIn, rebuys: 0 },
       });
       const player = allPlayers.find((p) => p.id === addPlayerID);
-      setGamePlayers((prev) => [...prev, { ...gp, player: { id: addPlayerID, name: player?.name ?? "" } }]);
+      setGamePlayers((prev) => [...prev, { ...gp, timeIn: gp.timeIn ?? null, timeOut: null, player: { id: addPlayerID, name: player?.name ?? "" } }]);
       setAddPlayerID(""); setAddBuyIn("20"); setAddPlayerOpen(false);
     } catch (e) {
       let msg = e.message;
@@ -87,6 +96,25 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
       setAddError(msg);
     }
     setSaving(false);
+  };
+
+  // Owner/admin-only: stamps timeIn (now) on every player who was pre-selected
+  // at game creation and is still waiting on one -- i.e. everyone who hasn't
+  // bought in mid-game since. Anyone added after this point gets their own
+  // timeIn immediately (see handleAddPlayer / the server side of buy-ins).
+  const handleStartTimer = async () => {
+    setTimerError("");
+    setTimerSaving(true);
+    try {
+      const { timeIn } = await apiFetch("/api/games/" + game.id + "/start-timer", { method: "POST" });
+      setTimerStarted(true);
+      setGamePlayers((prev) => prev.map((p) => (p.timeIn ? p : { ...p, timeIn })));
+    } catch (e) {
+      let msg = e.message;
+      try { msg = JSON.parse(e.message).error || msg; } catch {}
+      setTimerError(msg);
+    }
+    setTimerSaving(false);
   };
 
   // Save a cash-out as soon as it's entered, so a player who leaves mid-game is
@@ -103,8 +131,8 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
 
     setCashOutSaving((prev) => ({ ...prev, [gp.id]: true }));
     try {
-      await apiFetch("/api/game-players/" + gp.id, { method: "PUT", body: { cashOut: value } });
-      setGamePlayers((prev) => prev.map((p) => (p.id === gp.id ? { ...p, cashOut: value } : p)));
+      const res = await apiFetch("/api/game-players/" + gp.id, { method: "PUT", body: { cashOut: value } });
+      setGamePlayers((prev) => prev.map((p) => (p.id === gp.id ? { ...p, cashOut: value, timeOut: res.timeOut ?? null } : p)));
     } catch (e) {
       let msg = e.message;
       try { msg = JSON.parse(e.message).error || msg; } catch {}
@@ -133,6 +161,12 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
   );
 
   const currentUsername = getStoredUsername();
+  // The specific person assigned as this game's owner can cash players out
+  // even without the global "owner" role -- the server already allows this
+  // (isGameOwner in PUT /api/game-players/:id); the UI just needs to match.
+  const isThisGameOwner = !!(game.owner?.username && currentUsername
+    && game.owner.username.toLowerCase() === currentUsername.toLowerCase());
+  const canManageCashOuts = isOwner || isAdmin || isThisGameOwner;
 
   return (
     <div className="game-detail">
@@ -169,6 +203,18 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
         </div>
       )}
 
+      {/* Start Timer -- owner/admin only, begins the buy-in clock for anyone
+          pre-selected at game creation who hasn't bought in mid-game since */}
+      {(isOwner || isAdmin) && !game.isComplete && !timerStarted && (
+        <div className="start-timer-banner">
+          <span className="start-timer-text">Timer hasn't started — Time In won't be recorded for pre-selected players until you start it.</span>
+          <button className="btn btn-primary btn-sm" onClick={handleStartTimer} disabled={timerSaving}>
+            <Play weight="fill" /> {timerSaving ? "Starting..." : "Start Timer"}
+          </button>
+        </div>
+      )}
+      {timerError && <p className="error-msg">{timerError}</p>}
+
       {/* Balatro-style player cards */}
       <div className="player-cards-strip">
         {gamePlayers.map((gp) => {
@@ -195,7 +241,9 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
                     <div className="joker-net">{net >= 0 ? "+" : ""}{fmt(net)}</div>
                   </div>
                 ) : !game.isComplete && (
-                  <div className="joker-live-badge"><Play weight="fill" size={9} /> Live</div>
+                  gp.timeIn
+                    ? <div className="joker-live-badge"><Play weight="fill" size={9} /> Live</div>
+                    : <div className="joker-live-badge joker-timer-pending">Timer not started</div>
                 )}
               </div>
             </div>
@@ -207,7 +255,7 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
       <div className="pot-contribution-row">
         <div className="pot-summary">
           <div className="pot-label">Total Pot</div>
-          <div className="pot-amount">{fmt(pot)}</div>
+          <div className="pot-amount">{fmt(displayPot)}</div>
         </div>
         {(() => {
           const myGp = gamePlayers.find(gp => gp.player?.name?.toLowerCase() === currentUsername?.toLowerCase());
@@ -223,7 +271,7 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
         })()}
       </div>
       <div className={"players-table mt-md" + ((isOwner || isAdmin) && !game.isComplete ? " players-table--with-actions" : "")}>
-        <div className="table-head"><span>Player</span><span>Buy-In</span><span>Rebuys</span><span>Total In</span><span>Cash Out</span><span>Net</span>{(isOwner || isAdmin) && !game.isComplete && <span></span>}</div>
+        <div className="table-head"><span>Player</span><span>Time In</span><span>Buy-In</span><span>Rebuys</span><span>Total In</span><span>Cash Out</span><span>Time Out</span><span>Net</span>{(isOwner || isAdmin) && !game.isComplete && <span></span>}</div>
         {gamePlayers.map((gp) => {
           const totalIn = gp.buyIn + (gp.rebuys ?? 0);
           // Server truth -- drives the Cashed Out badge. Busting out for $0 is
@@ -251,6 +299,7 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
                     </>
                   )}
                 </span>
+                <span className="muted">{gp.timeIn ?? "--"}</span>
                 <span>{fmt(gp.buyIn)}</span>
                 <span className="rebuy-cell">
                   <span className="rebuy-amount">{fmt(gp.rebuys ?? 0)}</span>
@@ -269,7 +318,7 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
                 <span>{fmt(totalIn)}</span>
                 <span>
                   {game.isComplete ? fmt(gp.cashOut ?? 0) : (
-                    (isOwner || isAdmin)
+                    canManageCashOuts
                       ? <input type="number" className="input cashout-input" placeholder="$0"
                           value={cashOuts[gp.id] ?? ""} min="0"
                           disabled={!!cashOutSaving[gp.id]}
@@ -279,6 +328,7 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
                       : <span className="muted">--</span>
                   )}
                 </span>
+                <span className="muted">{gp.timeOut ?? "--"}</span>
                 <span className={net !== null ? (net >= 0 ? "profit" : "loss") : "muted"}>
                   {net !== null ? (net >= 0 ? "+" : "") + fmt(net) : "--"}
                 </span>

@@ -1,5 +1,11 @@
 'use strict';
 
+// app.js calls dotenv.config() on import, but getApp() is lazy, so without this
+// line JWT_SECRET below is captured BEFORE .env is read. The helper would then
+// sign tokens with the fallback secret while the app verified with the real one,
+// and every authenticated request in the suite would 401.
+require('dotenv').config();
+
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');

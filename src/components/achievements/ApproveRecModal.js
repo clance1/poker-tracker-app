@@ -73,12 +73,12 @@ function ApproveRecModal({ rec, onClose, onApproved }) {
             </div>
           )}
           <div className="auth-field">
-            <label className="field-label">Art Guidance <span className="rule-form-optional">(optional — instructions for Gemini)</span></label>
+            <label className="field-label">Art Guidance <span className="rule-form-optional">(optional, instructions for Gemini)</span></label>
             <input type="text" className="input" maxLength={300} placeholder='e.g. "dark background, playing card aesthetic"'
               value={feedback} onChange={(e) => setFeedback(e.target.value)} />
           </div>
           <div className="auth-field">
-            <label className="field-label">Custom Inspiration Image <span className="rule-form-optional">(optional — overrides reference above)</span></label>
+            <label className="field-label">Custom Inspiration Image <span className="rule-form-optional">(optional, overrides the reference above)</span></label>
             <div className="inspiration-upload-row">
               <label className="btn btn-ghost btn-sm inspiration-upload-btn">
                 {inspirationFile ? "Change" : "Upload"}

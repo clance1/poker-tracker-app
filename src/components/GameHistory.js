@@ -64,7 +64,11 @@ function GameHistory({ games, scheduledGames, onSelectGame, onNewGame, onSchedul
         </div>
       )}
       {sorted.length === 0 ? (
-        <div className="empty-state"><div className="empty-icon">♣</div><p>No games yet. {isOwner ? "Start one!" : "Ask an Owner to create one."}</p></div>
+        <div className="empty-state">
+          <div className="empty-icon">♣</div>
+          <div className="empty-title">No games yet</div>
+          <p>{isOwner ? "Use New Game above to set the date, buy-ins and who is playing." : "An Owner needs to start the first game before anything shows up here."}</p>
+        </div>
       ) : sorted.map((g) => {
         const pot = totalPot(g.players?.items ?? []);
         const names = (g.players?.items ?? []).map((gp) => gp.player?.name).filter(Boolean).join(", ");

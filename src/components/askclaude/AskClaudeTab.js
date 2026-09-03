@@ -3,7 +3,7 @@ import { apiFetch } from "../../lib/api";
 import CardPicker from "./CardPicker";
 
 function ColoredOuts({ text }) {
-  if (!text || text.toLowerCase() === 'none' || text === '—') return <span>{text || '—'}</span>;
+  if (!text || text.toLowerCase() === 'none' || text === '-') return <span>{text || '-'}</span>;
   const tokens = text.split(/\s+/);
   return (
     <>
@@ -242,7 +242,7 @@ function AskClaudeTab() {
         {boardCount > 0 && (
           <div className="form-group">
             <label className="field-label">
-              Board Cards — {street === "flop" ? "Flop" : street === "turn" ? "Flop + Turn" : "Flop + Turn + River"}
+              Board Cards: {street === "flop" ? "Flop" : street === "turn" ? "Flop + Turn" : "Flop + Turn + River"}
             </label>
             <div className="cards-row">
               {boardCards.slice(0, boardCount).map((card, i) => (
@@ -257,7 +257,7 @@ function AskClaudeTab() {
           </div>
         )}
 
-        {hasDuplicates && <p className="error-msg">Duplicate cards detected — each card can only appear once.</p>}
+        {hasDuplicates && <p className="error-msg">Duplicate cards detected. Each card can only appear once.</p>}
         {error && <p className="error-msg">{error}</p>}
 
         <button
@@ -280,7 +280,7 @@ function AskClaudeTab() {
               <div className="analysis-stats">
                 <div className="stat-card">
                   <div className="stat-label">Win Probability</div>
-                  <div className="stat-value">{parsed.probability || "—"}</div>
+                  <div className="stat-value">{parsed.probability || "-"}</div>
                 </div>
                 <div className="stat-card">
                   <div className="stat-label">Outs</div>
@@ -288,7 +288,7 @@ function AskClaudeTab() {
                 </div>
                 <div className="stat-card">
                   <div className="stat-label">Recommendation</div>
-                  <div className={"stat-value " + recColor(parsed.recommendation)}>{parsed.recommendation || "—"}</div>
+                  <div className={"stat-value " + recColor(parsed.recommendation)}>{parsed.recommendation || "-"}</div>
                 </div>
               </div>
 

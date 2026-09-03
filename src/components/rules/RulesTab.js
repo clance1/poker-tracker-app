@@ -47,7 +47,7 @@ function RulesTab({ isOwner, isAdmin }) {
 
   const formatDate = (ts) => ts
     ? new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-    : "—";
+    : "-";
 
   if (loading) return <SkeletonTab rows={3} />;
 
@@ -82,7 +82,8 @@ function RulesTab({ isOwner, isAdmin }) {
       {rules.length === 0 ? (
         <div className="empty-state">
           <div className="empty-icon">♠</div>
-          <p>No game rules yet. Click "+ New Rule" to add the first one.</p>
+          <div className="empty-title">No game rules yet</div>
+          <p>Write up the variants your group plays so nobody has to re-explain them at the table.</p>
         </div>
       ) : (
         <div className="rules-grid">

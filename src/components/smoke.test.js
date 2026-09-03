@@ -23,6 +23,7 @@ import GameDetail from "./GameDetail";
 import PlayersTab from "./PlayersTab";
 import StatsTab from "./StatsTab";
 import AdminPanel from "./AdminPanel";
+import InviteCodes from "./InviteCodes";
 import SkeletonTab from "./Skeleton";
 import RulesTab from "./rules/RulesTab";
 import RuleDetail from "./rules/RuleDetail";
@@ -48,6 +49,7 @@ const ROUTES = {
   "/api/leaderboard/badges": { winner: null, loser: null },
   "/api/owners": { owners: [] },
   "/api/users": { users: [] },
+  "/api/admin/invite-codes": { codes: [] },
   "/api/players": { items: [] },
   "/api/games": { items: [] },
   "/api/scheduled-games": { games: [] },
@@ -132,8 +134,12 @@ const CASES = [
   ["ScheduleGameModal", <ScheduleGameModal onClose={noop} onScheduled={noop} />],
   ["GameDetail", <GameDetail game={GAME} onBack={noop} onRefresh={noop} isOwner isAdmin allPlayers={[]} />],
   ["PlayersTab", <PlayersTab players={[]} onRefresh={noop} isOwner isAdmin />],
+  ["PlayersTab (guest with claim email)", <PlayersTab
+    players={[{ id: "p1", name: "Dave", userId: null, claimEmail: "dave@example.com", games: { items: [] } }]}
+    onRefresh={noop} isOwner isAdmin />],
   ["StatsTab", <StatsTab />],
   ["AdminPanel", <AdminPanel />],
+  ["InviteCodes", <InviteCodes />],
   ["RulesTab", <RulesTab isOwner isAdmin />],
   ["RuleDetail", <RuleDetail rule={RULE} isOwner isAdmin onBack={noop} onEdit={noop} onRefresh={noop} />],
   ["RuleEditModal", <RuleEditModal rule={null} onClose={noop} onSaved={noop} />],

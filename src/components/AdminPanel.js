@@ -4,6 +4,7 @@ import { ROLE_CLASS, ROLE_LABEL } from "../lib/constants";
 import Avatar from "./Avatar";
 import EditAchievementModal from "./achievements/EditAchievementModal";
 import { ArrowRight, PencilSimple, X } from "./icons";
+import InviteCodes from "./InviteCodes";
 import SkeletonTab from "./Skeleton";
 
 // --- Admin Panel ---
@@ -127,7 +128,7 @@ function AdminPanel() {
               </div>
             </div>
             <div className="admin-user-actions">
-              {/* Role buttons — show the two roles they're NOT currently */}
+              {/* Role buttons: show the two roles they are NOT currently */}
               {["admin", "owner", "user"].filter((r) => r !== (u.role ?? "user")).map((r) => (
                 <button key={r} className="btn btn-ghost btn-sm" onClick={() => changeRole(u.id, r)}>
                   <ArrowRight /> {ROLE_LABEL[r]}
@@ -139,6 +140,8 @@ function AdminPanel() {
           </div>
         ))}
       </div>
+
+      <InviteCodes />
 
       {xpConfig.length > 0 && (
         <div className="xp-settings-section">
@@ -199,7 +202,7 @@ function AdminPanel() {
                       <td className="admin-ach-desc" title={a.description}>
                         {a.description.length > 60 ? a.description.slice(0, 58) + "…" : a.description}
                       </td>
-                      <td className="admin-ach-xp">{a.xpValue > 0 ? `${a.xpValue} XP` : "—"}</td>
+                      <td className="admin-ach-xp">{a.xpValue > 0 ? `${a.xpValue} XP` : "-"}</td>
                       <td className="admin-ach-criteria">{criteriaLabel}</td>
                       <td className="admin-ach-users">{a.earnerCount ?? 0} / {users.length}</td>
                       <td className="admin-ach-edit-cell">

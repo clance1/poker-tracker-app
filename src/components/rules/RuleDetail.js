@@ -12,7 +12,7 @@ function RuleDetail({ rule, isOwner, isAdmin, onBack, onEdit, onRefresh }) {
   const [expandedVersions, setExpandedVersions] = useState(new Set());
 
   const formatTs = (ts) => {
-    if (!ts) return "—";
+    if (!ts) return "-";
     return new Date(ts).toLocaleDateString("en-US", {
       month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit",
     });

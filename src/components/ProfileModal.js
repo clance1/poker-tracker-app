@@ -92,7 +92,7 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
       setProfile(updated);
       setTelegramUserId(updated.telegramUserId ?? "");
       setNewPassword(""); setConfirmPassword(""); setShowPwSection(false);
-      setSuccess(updated.telegramUserId && !profile?.telegramUserId ? "Profile saved. Check Telegram — the bot will DM you shortly!" : "Profile saved.");
+      setSuccess(updated.telegramUserId && !profile?.telegramUserId ? "Profile saved. Check Telegram, the bot will DM you shortly." : "Profile saved.");
     } catch (err) {
       let msg = err.message;
       try { msg = JSON.parse(err.message).error || msg; } catch {}
@@ -176,7 +176,7 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
                 <div className="tg-help">
                   <span>1. Message <b>@userinfobot</b> on Telegram to get your numeric ID.</span>
                   <span>2. Start a chat with the poker bot so it can DM you.</span>
-                  <span>3. Save — the bot will add you to the group automatically.</span>
+                  <span>3. Save, and the bot will add you to the group automatically.</span>
                 </div>
               </div>
 

@@ -12,21 +12,30 @@ const db = h.getDb();
 // share one IP, so this describe block deliberately makes exactly 5 POST
 // /api/register calls total -- one for each validation branch, one success, one
 // duplicate -- to stay under the limit.
+// Registration became invite-gated: a usable code and a valid email are now
+// required. Seed one code directly so these tests exercise the validation
+// branches rather than the invite gate (which invite-registration.test.js owns).
+const inviteCode = "TEST-AUTH-CODE-0001";
+db.prepare(
+  `INSERT INTO invite_codes (id, code, label, createdAt, maxUses, useCount)
+   VALUES (?, ?, ?, ?, NULL, 0)`
+).run("auth-test-code", inviteCode, "auth.test.js", new Date().toISOString());
+
 describe('auth: register', () => {
   test('username shorter than 2 chars -> 400', async () => {
-    const res = await agent.post('/api/register').send({ username: 'a', password: 'password123' });
+    const res = await agent.post('/api/register').send({ username: 'a', password: 'password123', inviteCode, email: h.uniqueName("a") + "@example.com" });
     assert.strictEqual(res.status, 400);
     assert.match(res.body.error, /at least 2 characters/);
   });
 
   test('username with disallowed characters -> 400', async () => {
-    const res = await agent.post('/api/register').send({ username: 'bad name!', password: 'password123' });
+    const res = await agent.post('/api/register').send({ username: 'bad name!', password: 'password123', inviteCode, email: h.uniqueName("b") + "@example.com" });
     assert.strictEqual(res.status, 400);
     assert.match(res.body.error, /may only contain/);
   });
 
   test('password shorter than 6 chars -> 400', async () => {
-    const res = await agent.post('/api/register').send({ username: h.uniqueName('reguser'), password: '123' });
+    const res = await agent.post('/api/register').send({ username: h.uniqueName('reguser'), password: '123', inviteCode, email: h.uniqueName("c") + "@example.com" });
     assert.strictEqual(res.status, 400);
     assert.match(res.body.error, /at least 6 characters/);
   });
@@ -34,14 +43,16 @@ describe('auth: register', () => {
   let regUsername;
   test('valid registration -> 200 {username, role}, sets auth_token cookie', async () => {
     regUsername = h.uniqueName('reguser');
-    const res = await agent.post('/api/register').send({ username: regUsername, password: 'password123' });
+    const res = await agent.post('/api/register')
+      .send({ username: regUsername, password: 'password123', inviteCode, email: regUsername + "@example.com" });
     assert.strictEqual(res.status, 200);
-    assert.deepStrictEqual(res.body, { username: regUsername, role: 'user' });
+    assert.deepStrictEqual(res.body, { username: regUsername, role: 'user', claimedGuest: null });
     assert.ok(res.headers['set-cookie']?.some((c) => c.startsWith('auth_token=')));
   });
 
   test('duplicate username (case-insensitive) -> 409', async () => {
-    const res = await agent.post('/api/register').send({ username: regUsername.toUpperCase(), password: 'password123' });
+    const res = await agent.post('/api/register')
+      .send({ username: regUsername.toUpperCase(), password: 'password123', inviteCode, email: h.uniqueName("d") + "@example.com" });
     assert.strictEqual(res.status, 409);
     assert.match(res.body.error, /already taken/);
   });

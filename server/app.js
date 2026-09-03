@@ -13,6 +13,7 @@ const multer = require('multer');
 const Anthropic = require('@anthropic-ai/sdk');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const db = require('./db');
+const { generateInviteCode, codeIsUsable, findUsableCodeIn } = require('./invites');
 const paths = require('./paths');
 
 const anthropic = process.env.ANTHROPIC_API_KEY
@@ -292,6 +293,99 @@ function adminAuth(req, res, next) {
   });
 }
 
+// --- Invite codes ---------------------------------------------------------
+// Rules live in ./invites.js so they can be unit tested without a database.
+const findUsableCode = (raw) =>
+  findUsableCodeIn(db.prepare('SELECT * FROM invite_codes').all(), raw);
+
+function insertInviteCode({ label, maxUses, createdBy }) {
+  // Retry on the vanishingly unlikely UNIQUE collision rather than 500.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateInviteCode();
+    try {
+      const id = uuidv4();
+      db.prepare(
+        `INSERT INTO invite_codes (id, code, label, createdBy, createdAt, maxUses, useCount)
+         VALUES (?, ?, ?, ?, ?, ?, 0)`
+      ).run(id, code, label || null, createdBy || null, new Date().toISOString(), maxUses ?? null);
+      return db.prepare('SELECT * FROM invite_codes WHERE id = ?').get(id);
+    } catch (e) {
+      if (!e.message?.includes('UNIQUE')) throw e;
+    }
+  }
+  throw new Error('Could not generate a unique invite code.');
+}
+
+const shapeCode = (row) => ({
+  id: row.id,
+  code: row.code,
+  label: row.label ?? null,
+  createdAt: row.createdAt,
+  revokedAt: row.revokedAt ?? null,
+  maxUses: row.maxUses ?? null,
+  useCount: row.useCount ?? 0,
+  active: codeIsUsable(row),
+  redemptions: db.prepare(
+    'SELECT username, redeemedAt FROM invite_redemptions WHERE codeId = ? ORDER BY redeemedAt'
+  ).all(row.id),
+});
+
+app.get('/api/admin/invite-codes', adminAuth, (_req, res) => {
+  const rows = db.prepare('SELECT * FROM invite_codes ORDER BY createdAt DESC').all();
+  res.json({ codes: rows.map(shapeCode) });
+});
+
+app.post('/api/admin/invite-codes', adminAuth, (req, res) => {
+  const label = sanitizeStr(req.body.label, 60) || null;
+  let maxUses = null;
+  if (req.body.maxUses !== undefined && req.body.maxUses !== null && req.body.maxUses !== '') {
+    // Number(), not parseInt(): parseInt('2.5') is 2, which would silently
+    // accept a value the admin did not type.
+    maxUses = Number(req.body.maxUses);
+    if (!Number.isInteger(maxUses) || maxUses < 1)
+      return res.status(400).json({ error: 'Max uses must be a whole number of 1 or more.' });
+  }
+  try {
+    res.json(shapeCode(insertInviteCode({ label, maxUses, createdBy: req.user.userId })));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Could not create an invite code.' });
+  }
+});
+
+app.post('/api/admin/invite-codes/:id/revoke', adminAuth, (req, res) => {
+  const row = db.prepare('SELECT * FROM invite_codes WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Invite code not found.' });
+  if (row.revokedAt) return res.status(400).json({ error: 'That code is already revoked.' });
+  db.prepare('UPDATE invite_codes SET revokedAt = ? WHERE id = ?')
+    .run(new Date().toISOString(), req.params.id);
+  res.json(shapeCode(db.prepare('SELECT * FROM invite_codes WHERE id = ?').get(req.params.id)));
+});
+
+// Regenerate: revoke the old code and issue a replacement carrying the same
+// label and usage cap. Anyone holding the old string can no longer register.
+app.post('/api/admin/invite-codes/:id/regenerate', adminAuth, (req, res) => {
+  const row = db.prepare('SELECT * FROM invite_codes WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Invite code not found.' });
+  try {
+    const replacement = db.transaction(() => {
+      if (!row.revokedAt) {
+        db.prepare('UPDATE invite_codes SET revokedAt = ? WHERE id = ?')
+          .run(new Date().toISOString(), row.id);
+      }
+      return insertInviteCode({
+        label: row.label,
+        maxUses: row.maxUses,
+        createdBy: req.user.userId,
+      });
+    })();
+    res.json({ revokedId: row.id, code: shapeCode(replacement) });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Could not regenerate that invite code.' });
+  }
+});
+
 // --- Register ---
 app.post('/api/register', registerLimiter, async (req, res) => {
   const username = sanitizeStr(req.body.username, 30);
@@ -301,20 +395,71 @@ app.post('/api/register', registerLimiter, async (req, res) => {
   if (!/^[a-zA-Z0-9_.-]+$/.test(username))
     return res.status(400).json({ error: 'Username may only contain letters, numbers, underscores, hyphens, and dots.' });
   if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+
+  // Registration is invite-only. Validated before any hashing work is done.
+  const invite = findUsableCode(req.body.inviteCode);
+  if (!invite) return res.status(403).json({ error: 'That invite code is not valid. Ask an admin for a current one.' });
+
+  // Email is required so a guest's history can be claimed, and so accounts are
+  // recoverable. It is the join key for the guest-claim flow below.
+  const email = sanitizeEmail(req.body.email);
+  if (!email) return res.status(400).json({ error: 'A valid email address is required.' });
+  const emailTaken = db.prepare(
+    'SELECT id FROM users WHERE email IS NOT NULL AND lower(email) = ?'
+  ).get(email);
+  if (emailTaken) return res.status(409).json({ error: 'An account already uses that email address.' });
+
   try {
     const password_hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const id = uuidv4();
-    db.prepare('INSERT INTO users (id, username, password_hash, isAdmin, role, createdAt) VALUES (?, ?, ?, 0, ?, ?)')
-      .run(id, username, password_hash, 'user', new Date().toISOString());
-    try {
-      db.prepare('INSERT INTO players (id, name, userId, createdAt) VALUES (?, ?, ?, ?)')
-        .run(uuidv4(), username, id, new Date().toISOString());
-    } catch (_e) {}
+    const now = new Date().toISOString();
+
+    // One transaction: either the account, the player link and the redemption
+    // all land, or none of them do. Without this a crash midway could burn an
+    // invite use or orphan a claimed guest.
+    const claimedPlayer = db.transaction(() => {
+      db.prepare(
+        `INSERT INTO users (id, username, password_hash, isAdmin, role, email, createdAt)
+         VALUES (?, ?, ?, 0, ?, ?, ?)`
+      ).run(id, username, password_hash, 'user', email, now);
+
+      // Does an admin-tagged guest belong to this person? If so, adopt that row
+      // rather than creating a second one: every game_players reference points
+      // at the player id, so the whole history transfers with one UPDATE.
+      const guest = db.prepare(
+        `SELECT id, name FROM players
+         WHERE userId IS NULL AND claimEmail IS NOT NULL AND lower(claimEmail) = ?`
+      ).get(email);
+
+      if (guest) {
+        db.prepare('UPDATE players SET userId = ?, claimEmail = NULL WHERE id = ?').run(id, guest.id);
+      } else {
+        // Existing behaviour: a fresh player named after the account. Ignored if
+        // the name collides, exactly as before.
+        try {
+          db.prepare('INSERT INTO players (id, name, userId, createdAt) VALUES (?, ?, ?, ?)')
+            .run(uuidv4(), username, id, now);
+        } catch (_e) {}
+      }
+
+      db.prepare('UPDATE invite_codes SET useCount = useCount + 1 WHERE id = ?').run(invite.id);
+      db.prepare(
+        `INSERT INTO invite_redemptions (id, codeId, userId, username, redeemedAt)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run(uuidv4(), invite.id, id, username, now);
+
+      return guest ?? null;
+    })();
+
     try { awardXP(id, getXpConfig('create_profile'), 'Created a profile'); } catch (_e) {}
     try { awardProfileAchievement(id, 'profile_created'); } catch (_e) {}
     const token = jwt.sign({ userId: id, username, role: 'user' }, JWT_SECRET, { expiresIn: '30d' });
     res.cookie('auth_token', token, COOKIE_OPTS);
-    res.json({ username, role: 'user' });
+    res.json({
+      username,
+      role: 'user',
+      claimedGuest: claimedPlayer ? claimedPlayer.name : null,
+    });
   } catch (e) {
     if (e.message?.includes('UNIQUE')) return res.status(409).json({ error: 'Username already taken.' });
     console.error(e);
@@ -404,6 +549,10 @@ app.patch('/api/profile', auth, async (req, res) => {
     } else {
       const cleaned = sanitizeEmail(req.body.email);
       if (!cleaned) return res.status(400).json({ error: 'Invalid email address.' });
+      const clash = db.prepare(
+        'SELECT id FROM users WHERE email IS NOT NULL AND lower(email) = ? AND id != ?'
+      ).get(cleaned, req.user.userId);
+      if (clash) return res.status(409).json({ error: 'Another account already uses that email address.' });
       sets.push('email = ?'); vals.push(cleaned);
     }
   }
@@ -572,7 +721,7 @@ app.patch('/api/users/:id', adminAuth, async (req, res) => {
 // --- Players ---
 app.get('/api/players', auth, (req, res) => {
   const players = db.prepare(`
-    SELECT p.id, p.name, p.userId, p.createdAt, u.avatarPath, COALESCE(u.xp, 0) as xp
+    SELECT p.id, p.name, p.userId, p.claimEmail, p.createdAt, u.avatarPath, COALESCE(u.xp, 0) as xp
     FROM players p
     LEFT JOIN users u ON p.userId = u.id
     ORDER BY p.name
@@ -587,6 +736,7 @@ app.get('/api/players', auth, (req, res) => {
     `).all(p.id);
     return {
       id: p.id, name: p.name, userId: p.userId ?? null,
+      claimEmail: p.claimEmail ?? null,
       avatarPath: p.avatarPath ?? null, xp: p.xp ?? 0,
       games: {
         items: gamePlayers.map((gp) => ({
@@ -607,6 +757,45 @@ app.post('/api/players', ownerAuth, (req, res) => {
     db.prepare('INSERT INTO players (id, name, createdAt) VALUES (?, ?, ?)').run(id, name, new Date().toISOString());
     res.json({ id, name });
   } catch { res.status(400).json({ error: 'Player already exists' }); }
+});
+
+// Attach an email to a guest so the person who registers with it inherits the
+// guest's game history. Admin only: this hands over ownership of real data.
+app.patch('/api/players/:id', adminAuth, (req, res) => {
+  const player = db.prepare('SELECT id, name, userId, claimEmail FROM players WHERE id = ?').get(req.params.id);
+  if (!player) return res.status(404).json({ error: 'Player not found.' });
+  if (player.userId)
+    return res.status(400).json({ error: 'That player is already linked to an account.' });
+  if (req.body.claimEmail === undefined)
+    return res.status(400).json({ error: 'Nothing to update.' });
+
+  if (req.body.claimEmail === null || req.body.claimEmail === '') {
+    db.prepare('UPDATE players SET claimEmail = NULL WHERE id = ?').run(player.id);
+    return res.json({ id: player.id, name: player.name, claimEmail: null });
+  }
+
+  const email = sanitizeEmail(req.body.claimEmail);
+  if (!email) return res.status(400).json({ error: 'Invalid email address.' });
+
+  // If an account already exists on that address, the claim would never fire,
+  // because claiming only happens during registration. Say so rather than
+  // silently storing a value that can never be used.
+  const existing = db.prepare(
+    'SELECT username FROM users WHERE email IS NOT NULL AND lower(email) = ?'
+  ).get(email);
+  if (existing)
+    return res.status(409).json({
+      error: `${existing.username} already has an account with that email, so it cannot be claimed. Ask an admin to merge manually.`,
+    });
+
+  const otherGuest = db.prepare(
+    'SELECT name FROM players WHERE id != ? AND claimEmail IS NOT NULL AND lower(claimEmail) = ?'
+  ).get(player.id, email);
+  if (otherGuest)
+    return res.status(409).json({ error: `That email is already reserved for guest "${otherGuest.name}".` });
+
+  db.prepare('UPDATE players SET claimEmail = ? WHERE id = ?').run(email, player.id);
+  res.json({ id: player.id, name: player.name, claimEmail: email });
 });
 
 app.delete('/api/players/:id', ownerAuth, (req, res) => {
@@ -641,7 +830,7 @@ app.get('/api/games', auth, (req, res) => {
   const games = db.prepare('SELECT * FROM games ORDER BY date DESC').all();
   const result = games.map((g) => {
     const players = db.prepare(`
-      SELECT gp.id, gp.buyIn, gp.rebuys, gp.cashOut,
+      SELECT gp.id, gp.buyIn, gp.rebuys, gp.cashOut, gp.timeIn, gp.timeOut,
              p.id as playerID, p.name as playerName,
              u.avatarPath
       FROM game_players gp
@@ -655,10 +844,12 @@ app.get('/api/games', auth, (req, res) => {
     return {
       id: g.id, date: g.date, isComplete: !!g.isComplete, notes: g.notes,
       ownerId: g.ownerId, location: g.location, startTime: g.startTime, endTime: g.endTime,
+      timerStarted: !!g.timerStarted,
       owner,
       players: {
         items: players.map((gp) => ({
           id: gp.id, buyIn: gp.buyIn, rebuys: gp.rebuys, cashOut: gp.cashOut,
+          timeIn: gp.timeIn ?? null, timeOut: gp.timeOut ?? null,
           player: { id: gp.playerID, name: gp.playerName, avatarPath: gp.avatarPath ?? null },
         })),
       },
@@ -696,7 +887,24 @@ app.post('/api/games', ownerAuth, (req, res) => {
     .run(id, date, isComplete ? 1 : 0, ownerId, location, startTime, new Date().toISOString());
   const locationNote = location ? `\n📍 ${location}` : '';
   telegramBroadcast(`🃏 <b>New game started!</b>\n📅 ${date} at ${startTime}${locationNote}`);
-  res.json({ id, date, isComplete, ownerId, location, startTime, endTime: null });
+  res.json({ id, date, isComplete, ownerId, location, startTime, endTime: null, timerStarted: false });
+});
+
+// Starts the buy-in clock for a game: stamps timeIn (now) on every game_player
+// row that doesn't already have one -- i.e. the players who were pre-selected
+// at game creation, before the owner was ready to actually begin play. Anyone
+// added to the game after this point gets timeIn set immediately on buy-in
+// instead (see POST /api/game-players).
+app.post('/api/games/:id/start-timer', ownerAuth, (req, res) => {
+  const game = db.prepare('SELECT id, isComplete, timerStarted FROM games WHERE id = ?').get(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Game not found.' });
+  if (game.isComplete) return res.status(400).json({ error: 'This game has already ended.' });
+  if (game.timerStarted) return res.status(400).json({ error: 'The timer has already been started for this game.' });
+
+  const timeIn = new Date().toTimeString().slice(0, 5);
+  db.prepare('UPDATE games SET timerStarted = 1 WHERE id = ?').run(req.params.id);
+  db.prepare('UPDATE game_players SET timeIn = ? WHERE gameID = ? AND timeIn IS NULL').run(timeIn, req.params.id);
+  res.json({ id: req.params.id, timerStarted: true, timeIn });
 });
 
 app.put('/api/games/:id', ownerAuth, (req, res) => {
@@ -831,7 +1039,7 @@ app.post('/api/game-players', auth, (req, res) => {
   // Ownership check mirrors PUT /api/game-players/:id: allow only if the
   // caller is the linked player, the game owner, or has role owner/admin.
   const player = db.prepare('SELECT userId FROM players WHERE id = ?').get(playerID);
-  const game = db.prepare('SELECT ownerId FROM games WHERE id = ?').get(gameID);
+  const game = db.prepare('SELECT ownerId, timerStarted FROM games WHERE id = ?').get(gameID);
 
   const isAdmin = req.user.role === 'admin';
   const isOwner = req.user.role === 'owner' || req.user.role === 'admin';
@@ -842,16 +1050,21 @@ app.post('/api/game-players', auth, (req, res) => {
     return res.status(403).json({ error: 'You are not authorised to add this record.' });
   }
 
+  // The timer already running means this buy-in is happening live, so start
+  // this player's clock immediately. If it hasn't started yet, this player is
+  // being pre-selected and their timeIn waits for "Start Timer" like everyone
+  // else's.
+  const timeIn = game && game.timerStarted ? new Date().toTimeString().slice(0, 5) : null;
   const id = uuidv4();
-  db.prepare('INSERT INTO game_players (id, gameID, playerID, buyIn, rebuys) VALUES (?, ?, ?, ?, ?)')
-    .run(id, gameID, playerID, buyIn, rebuys);
+  db.prepare('INSERT INTO game_players (id, gameID, playerID, buyIn, rebuys, timeIn) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, gameID, playerID, buyIn, rebuys, timeIn);
   try {
     const player = db.prepare('SELECT name FROM players WHERE id = ?').get(playerID);
     const game = db.prepare('SELECT date FROM games WHERE id = ?').get(gameID);
     if (player && game)
       telegramBroadcast(`💵 <b>${player.name}</b> bought in for $${buyIn.toFixed(0)} — ${game.date}`);
   } catch (_e) {}
-  res.json({ id, gameID, playerID, buyIn, rebuys });
+  res.json({ id, gameID, playerID, buyIn, rebuys, timeIn });
 });
 
 app.put('/api/game-players/:id', auth, (req, res) => {
@@ -892,6 +1105,15 @@ app.put('/api/game-players/:id', auth, (req, res) => {
     return res.status(400).json({ error: 'Cash-out must be a number.' });
   if (cashOut !== null && cashOut < 0)
     return res.status(400).json({ error: 'Cash-out cannot be negative.' });
+  // Time Out is stamped the first time a cash-out is actually recorded, and
+  // cleared right along with it if the cash-out is undone. A later correction
+  // to an already-cashed-out value (or an unrelated update, e.g. a rebuy)
+  // keeps the existing Time Out.
+  const timeOut = clearsCashOut
+    ? null
+    : (req.body.cashOut !== undefined && cashOut !== null && gp.timeOut == null
+        ? new Date().toTimeString().slice(0, 5)
+        : gp.timeOut);
   try {
     const row = db.prepare(
       'SELECT p.name FROM game_players gp JOIN players p ON gp.playerID = p.id WHERE gp.id = ?'
@@ -912,9 +1134,9 @@ app.put('/api/game-players/:id', auth, (req, res) => {
       }
     }
   } catch (_e) {}
-  db.prepare('UPDATE game_players SET buyIn = ?, rebuys = ?, cashOut = ? WHERE id = ?')
-    .run(buyIn, rebuys, cashOut, req.params.id);
-  res.json({ id: req.params.id, buyIn, rebuys, cashOut });
+  db.prepare('UPDATE game_players SET buyIn = ?, rebuys = ?, cashOut = ?, timeOut = ? WHERE id = ?')
+    .run(buyIn, rebuys, cashOut, timeOut, req.params.id);
+  res.json({ id: req.params.id, buyIn, rebuys, cashOut, timeOut });
 });
 
 app.delete('/api/game-players/:id', auth, (req, res) => {

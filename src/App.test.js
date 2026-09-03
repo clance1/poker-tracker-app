@@ -383,53 +383,61 @@ describe("Helper Functions", () => {
 
   // ── parseFrame tests ────────────────────────────────────────────
   describe("parseFrame", () => {
+    const CENTRED = { px: 50, py: 50, scale: 1 };
+
     test("returns default frame for null/undefined/empty", () => {
-      expect(parseFrame(null)).toEqual({ x: 0, y: 0, scale: 1 });
-      expect(parseFrame(undefined)).toEqual({ x: 0, y: 0, scale: 1 });
-      expect(parseFrame("")).toEqual({ x: 0, y: 0, scale: 1 });
+      expect(parseFrame(null)).toEqual(CENTRED);
+      expect(parseFrame(undefined)).toEqual(CENTRED);
+      expect(parseFrame("")).toEqual(CENTRED);
     });
 
-    test("parses valid JSON frame object", () => {
-      const input = '{"x": 0.1, "y": 0.2, "scale": 1.5}';
-      expect(parseFrame(input)).toEqual({ x: 0.1, y: 0.2, scale: 1.5 });
+    test("parses the current px/py/scale format", () => {
+      expect(parseFrame('{"px": 30, "py": 70, "scale": 1.5}'))
+        .toEqual({ px: 30, py: 70, scale: 1.5 });
     });
 
     test("returns default for malformed JSON", () => {
-      expect(parseFrame("not json")).toEqual({ x: 0, y: 0, scale: 1 });
-      expect(parseFrame("{bad")).toEqual({ x: 0, y: 0, scale: 1 });
+      expect(parseFrame("not json")).toEqual(CENTRED);
+      expect(parseFrame("{bad")).toEqual(CENTRED);
+      expect(parseFrame("null")).toEqual(CENTRED);
+    });
+
+    test("clamps position to 0-100 and scale to 1-4", () => {
+      expect(parseFrame('{"px": -20, "py": 180, "scale": 0.25}'))
+        .toEqual({ px: 0, py: 100, scale: 1 });
+      expect(parseFrame('{"px": 50, "py": 50, "scale": 99}'))
+        .toEqual({ px: 50, py: 50, scale: 4 });
+    });
+
+    test("migrates the v2 fractional-offset format", () => {
+      // Centre stays centre.
+      expect(parseFrame('{"x": 0, "y": 0, "scale": 1}')).toEqual(CENTRED);
+      // Positive x shifted the image right, revealing more of its left side,
+      // so the crop anchor moves toward 0.
+      expect(parseFrame('{"x": 0.2, "y": -0.2, "scale": 2}'))
+        .toEqual({ px: 40, py: 60, scale: 2 });
     });
 
     test("migrates legacy posX/posY percentage format", () => {
-      // posX: 50, posY: 50 (center) → x: 0, y: 0
-      const input = '{"posX": 50, "posY": 50}';
-      expect(parseFrame(input)).toEqual({ x: 0, y: 0, scale: 1 });
-    });
-
-    test("migrates legacy posX/posY with offset", () => {
-      // posX: 60 → (60-50)/100 = 0.1
-      // posY: 40 → (40-50)/100 = -0.1
-      const input = '{"posX": 60, "posY": 40}';
-      expect(parseFrame(input)).toEqual({ x: 0.1, y: -0.1, scale: 1 });
+      expect(parseFrame('{"posX": 50, "posY": 50}')).toEqual(CENTRED);
+      expect(parseFrame('{"posX": 25, "posY": 80, "scale": 1.5}'))
+        .toEqual({ px: 25, py: 80, scale: 1.5 });
     });
 
     test("preserves scale during legacy migration", () => {
-      const input = '{"posX": 50, "posY": 50, "scale": 2}';
-      expect(parseFrame(input)).toEqual({ x: 0, y: 0, scale: 2 });
+      expect(parseFrame('{"posX": 50, "posY": 50, "scale": 2}'))
+        .toEqual({ px: 50, py: 50, scale: 2 });
     });
 
-    test("defaults missing posX/posY to 50 in legacy format", () => {
-      const input = '{"scale": 1.5}';
-      // No posX/posY, so defaults to { x: 0, y: 0, scale: 1.5 }
-      expect(parseFrame(input)).toEqual({ x: 0, y: 0, scale: 1.5 });
+    test("keeps scale when no position keys are present", () => {
+      expect(parseFrame('{"scale": 1.5}')).toEqual({ px: 50, py: 50, scale: 1.5 });
+      expect(parseFrame('{}')).toEqual(CENTRED);
     });
 
     test("handles partial frame objects", () => {
-      const input = '{"x": 0.5}';
-      // Merges with default, so y and scale come from default
-      const result = parseFrame(input);
-      expect(result.x).toBe(0.5);
-      expect(result.y).toBe(0);
-      expect(result.scale).toBe(1);
+      // Missing axis defaults to centre rather than NaN.
+      expect(parseFrame('{"px": 20}')).toEqual({ px: 20, py: 50, scale: 1 });
+      expect(parseFrame('{"x": 0.5}')).toEqual({ px: 25, py: 50, scale: 1 });
     });
   });
 

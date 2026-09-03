@@ -15,16 +15,16 @@ function StatsTab() {
       .finally(() => setLoading(false));
   }, []);
 
-  const fmtMoney = (v) => (v == null ? "—" : "$" + Number(v).toFixed(0));
+  const fmtMoney = (v) => (v == null ? "-" : "$" + Number(v).toFixed(0));
   const fmtMoneySign = (v) => {
-    if (v == null) return "—";
+    if (v == null) return "-";
     const n = Number(v);
     return (n >= 0 ? "+" : "") + "$" + Math.abs(n).toFixed(0);
   };
   const fmtDuration = (start, end) => {
-    if (!start || !end) return "—";
+    if (!start || !end) return "-";
     const ms = new Date(end) - new Date(start);
-    if (ms <= 0) return "—";
+    if (ms <= 0) return "-";
     const h = Math.floor(ms / 3600000);
     const m = Math.floor((ms % 3600000) / 60000);
     if (h === 0) return `${m}m`;
@@ -32,14 +32,15 @@ function StatsTab() {
   };
   const fmtDate = (d) => d
     ? new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })
-    : "—";
+    : "-";
 
   if (loading) return <SkeletonTab rows={4} />;
   if (!stats?.summary || stats.summary.gamesPlayed === 0) {
     return (
       <div className="empty-state">
         <div className="empty-icon">♦</div>
-        <p>No completed games yet. Stats will appear after your first game.</p>
+        <div className="empty-title">No stats yet</div>
+        <p>Your buy-ins, cash-outs and running profit appear here once you have played a game that has been ended.</p>
       </div>
     );
   }
@@ -94,8 +95,8 @@ function StatsTab() {
             <div key={i} className={"history-row" + (net == null ? "" : net >= 0 ? " history-profit" : " history-loss")}>
               <span className="history-date">{fmtDate(g.date)}{g.location ? ` · ${g.location}` : ""}</span>
               <span>{fmtMoney(g.buyIn)}</span>
-              <span>{g.rebuys ? fmtMoney(g.rebuys) : "—"}</span>
-              <span>{g.cashOut != null ? fmtMoney(g.cashOut) : "—"}</span>
+              <span>{g.rebuys ? fmtMoney(g.rebuys) : "-"}</span>
+              <span>{g.cashOut != null ? fmtMoney(g.cashOut) : "-"}</span>
               <span>{fmtDuration(g.startTime, g.endTime)}</span>
             </div>
           );
