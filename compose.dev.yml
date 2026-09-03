@@ -1,0 +1,25 @@
+name: poker-tracker-dev
+services:
+  app:
+    build:
+      context: .
+      target: development
+    init: true
+    ports:
+      - "127.0.0.1:3002:3000"
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      BROWSER: none
+      WATCHPACK_POLLING: "true"
+      JWT_SECRET: local-development-only
+      ALLOWED_ORIGIN: http://localhost:3002
+    volumes:
+      - ./src:/app/src:ro
+      - ./public:/app/public:ro
+      - ./server:/app/server:ro
+      - ./scripts:/app/scripts:ro
+      - ./tests:/app/tests:ro
+      - dev-data:/app/data
+volumes:
+  dev-data:

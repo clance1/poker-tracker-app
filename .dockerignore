@@ -1,5 +1,19 @@
-node_modules
-poker.db
-.env
-build
-amplify
+# Only application source and test/build tools may enter an image build.
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!src/
+!src/**
+!public/
+!public/**
+!server/
+!server/**
+!scripts/
+!scripts/**
+!tests/
+!tests/**
+**/.env*
+**/*.db
+**/*.db-*
+**/node_modules
