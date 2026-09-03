@@ -1,3 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <text y=".9em" font-size="90">🃏</text>
+  <rect width="100" height="100" rx="22" fill="#12151c"/>
+  <path transform="translate(50 50) scale(0.8) translate(-50 -51)"
+        fill="#d4af37" d="M 50 10 C 38 26 18 38 18 54 C 18 65 26 72 36 72 C 41 72 45 70 48 67 C 47 78 42 87 34 92 L 66 92 C 58 87 53 78 52 67 C 55 70 59 72 64 72 C 74 72 82 65 82 54 C 82 38 62 26 50 10 Z"/>
 </svg>
