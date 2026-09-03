@@ -1,9 +1,8 @@
 const Database = require('better-sqlite3');
-const path = require('path');
+const paths = require('./paths');
 
-const dbDir = path.join(__dirname, '../data');
-require('fs').mkdirSync(dbDir, { recursive: true });
-const db = new Database(path.join(dbDir, 'poker.db'));
+require('fs').mkdirSync(paths.DATA_DIR, { recursive: true });
+const db = new Database(paths.dbPath);
 
 // Keep FK enforcement off — we handle referential integrity in application code
 db.pragma('foreign_keys = OFF');
@@ -284,5 +283,62 @@ addCol('user_achievements', 'seen', 'INTEGER NOT NULL DEFAULT 1');
 
 // users: Telegram user ID for personal DM notifications
 addCol('users', 'telegramUserId', 'TEXT');
+
+// users: forced-rotation flag set when an admin resets someone else's password
+// via PATCH /api/users/:id (distinct from `passwordChanged`, which is already
+// overloaded by /api/register and seedAdmin's default-password bootstrap check)
+addCol('users', 'mustChangePassword', 'INTEGER NOT NULL DEFAULT 0');
+
+// --- Invite-gated registration ---------------------------------------------
+// Account creation requires an unrevoked, unexhausted code. Codes are stored in
+// plaintext on purpose: an admin has to be able to read one back to share it.
+// They are not credentials, and the entropy (80 bits) plus the existing
+// per-IP register rate limit is what makes guessing impractical.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS invite_codes (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    label TEXT,
+    createdBy TEXT,
+    createdAt TEXT NOT NULL,
+    revokedAt TEXT,
+    maxUses INTEGER,
+    useCount INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS invite_redemptions (
+    id TEXT PRIMARY KEY,
+    codeId TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    username TEXT NOT NULL,
+    redeemedAt TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_invite_redemptions_code
+    ON invite_redemptions(codeId);
+`);
+
+// players: an admin can attach an email to a guest so that whoever registers
+// with that address inherits the guest's game history instead of starting over.
+// Cleared the moment it is claimed, so a claim can only ever happen once.
+addCol('players', 'claimEmail', 'TEXT');
+
+// game_players: per-player Time In / Time Out. Time In is stamped either when
+// the owner presses "Start Timer" (for players who were pre-selected at game
+// creation) or immediately on buy-in if the timer is already running. Time Out
+// is stamped the first time a cash-out is recorded.
+addCol('game_players', 'timeIn', 'TEXT');
+addCol('game_players', 'timeOut', 'TEXT');
+
+// games: whether the owner has pressed "Start Timer" yet. Gates whether newly
+// inserted game_players rows get an immediate timeIn.
+addCol('games', 'timerStarted', 'INTEGER NOT NULL DEFAULT 0');
+
+// users: Venmo handle for in-app Pay/Request deep links (see PATCH /api/profile).
+addCol('users', 'venmoHandle', 'TEXT');
+
+// game_players: when the owner has manually marked this player's net as
+// settled (paid/requested, via Venmo or otherwise). null = not settled.
+addCol('game_players', 'venmoSettledAt', 'TEXT');
 
 module.exports = db;
