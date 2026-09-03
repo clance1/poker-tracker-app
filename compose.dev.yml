@@ -1,0 +1,27 @@
+name: poker-tracker-dev
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    init: true
+    ports:
+      - "127.0.0.1:3002:3000"
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      BROWSER: none
+      WATCHPACK_POLLING: "true"
+      DATA_DIR: /app/data
+      JWT_SECRET: local-development-only-do-not-use-in-production
+      ALLOWED_ORIGIN: http://localhost:3002
+    volumes:
+      - ./src:/app/src:ro
+      - ./public:/app/public:ro
+      - ./server:/app/server:ro
+      - ./scripts:/app/scripts:ro
+      - dev-data:/app/data
+
+volumes:
+  dev-data:

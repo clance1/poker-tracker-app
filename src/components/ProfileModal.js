@@ -13,6 +13,7 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [telegramUserId, setTelegramUserId] = useState("");
+  const [venmoHandle, setVenmoHandle] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPwSection, setShowPwSection] = useState(false);
@@ -31,6 +32,7 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
       setLastName(p.lastName ?? "");
       setEmail(p.email ?? "");
       setTelegramUserId(p.telegramUserId ?? "");
+      setVenmoHandle(p.venmoHandle ?? "");
       setAvatarPreview(p.avatarPath ?? null);
     }).catch(() => setError("Failed to load profile."));
   }, []);
@@ -80,6 +82,10 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
     const tg = telegramUserId.trim();
     if (tg && !/^\d{1,15}$/.test(tg)) return setError("Telegram user ID must be a number (find yours at @userinfobot).");
     body.telegramUserId = tg;
+    const vh = venmoHandle.trim().replace(/^@/, "");
+    // Keep in sync with server/app.js's VENMO_HANDLE_RE.
+    if (vh && !/^[A-Za-z0-9_-]{5,30}$/.test(vh)) return setError("Venmo handle must be 5-30 letters, numbers, underscores, or hyphens.");
+    body.venmoHandle = vh;
     if (showPwSection) {
       if (!newPassword) return setError("Enter a new password.");
       if (newPassword.length < 6) return setError("Password must be at least 6 characters.");
@@ -91,6 +97,7 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
       const updated = await apiFetch("/api/profile", { method: "PATCH", body });
       setProfile(updated);
       setTelegramUserId(updated.telegramUserId ?? "");
+      setVenmoHandle(updated.venmoHandle ?? "");
       setNewPassword(""); setConfirmPassword(""); setShowPwSection(false);
       setSuccess(updated.telegramUserId && !profile?.telegramUserId ? "Profile saved. Check Telegram, the bot will DM you shortly." : "Profile saved.");
     } catch (err) {
@@ -178,6 +185,19 @@ function ProfileModal({ onClose, onAvatarChange, onSignOut }) {
                   <span>2. Start a chat with the poker bot so it can DM you.</span>
                   <span>3. Save, and the bot will add you to the group automatically.</span>
                 </div>
+              </div>
+
+              <div className="auth-field">
+                <label className="field-label">Venmo Handle <span className="field-optional">(optional)</span></label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="e.g. john-doe-42"
+                  value={venmoHandle}
+                  onChange={(e) => setVenmoHandle(e.target.value.replace(/^@+/, ""))}
+                  maxLength={30}
+                />
+                <p className="hint">Lets the game owner send or request your buy-in settlement via Venmo.</p>
               </div>
 
               <button className="btn btn-ghost btn-sm mt-xs"

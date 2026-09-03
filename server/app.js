@@ -104,6 +104,15 @@ const sanitizeEmail = (val) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s) ? s : null;
 };
 
+// Venmo usernames are 5-30 chars of letters/digits/underscore/hyphen. People
+// habitually type a leading "@" (as shown in the Venmo app), so strip it
+// before validating rather than rejecting otherwise-valid input.
+const VENMO_HANDLE_RE = /^[A-Za-z0-9_-]{5,30}$/;
+const sanitizeVenmoHandle = (val) => {
+  const s = String(val || '').trim().replace(/^@/, '');
+  return VENMO_HANDLE_RE.test(s) ? s : null;
+};
+
 // --- Telegram ---
 const telegramSend = (chatId, text) => {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -522,7 +531,7 @@ app.post('/api/change-password', changePasswordLimiter, async (req, res) => {
 // --- Profile ---
 app.get('/api/profile', auth, (req, res) => {
   const user = db.prepare(
-    'SELECT id, username, firstName, lastName, email, telegramUserId, role, avatarPath, xp, createdAt FROM users WHERE id = ?'
+    'SELECT id, username, firstName, lastName, email, telegramUserId, venmoHandle, role, avatarPath, xp, createdAt FROM users WHERE id = ?'
   ).get(req.user.userId);
   if (!user) return res.status(404).json({ error: 'User not found.' });
   res.json(user);
@@ -580,10 +589,21 @@ app.patch('/api/profile', auth, async (req, res) => {
     }
   }
 
+  if (req.body.venmoHandle !== undefined) {
+    const raw = String(req.body.venmoHandle || '').trim().replace(/^@/, '');
+    if (raw === '') {
+      sets.push('venmoHandle = ?'); vals.push(null);
+    } else {
+      const cleaned = sanitizeVenmoHandle(raw);
+      if (!cleaned) return res.status(400).json({ error: 'Venmo handle must be 5-30 letters, numbers, underscores, or hyphens.' });
+      sets.push('venmoHandle = ?'); vals.push(cleaned);
+    }
+  }
+
   if (sets.length === 0) return res.json({ message: 'No changes.' });
   db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...vals, req.user.userId);
   const updated = db.prepare(
-    'SELECT id, username, firstName, lastName, email, telegramUserId, role, avatarPath, createdAt FROM users WHERE id = ?'
+    'SELECT id, username, firstName, lastName, email, telegramUserId, venmoHandle, role, avatarPath, createdAt FROM users WHERE id = ?'
   ).get(req.user.userId);
 
   // Send welcome DM + attempt group add after response is sent
@@ -721,7 +741,7 @@ app.patch('/api/users/:id', adminAuth, async (req, res) => {
 // --- Players ---
 app.get('/api/players', auth, (req, res) => {
   const players = db.prepare(`
-    SELECT p.id, p.name, p.userId, p.claimEmail, p.createdAt, u.avatarPath, COALESCE(u.xp, 0) as xp
+    SELECT p.id, p.name, p.userId, p.claimEmail, p.createdAt, u.avatarPath, u.venmoHandle, COALESCE(u.xp, 0) as xp
     FROM players p
     LEFT JOIN users u ON p.userId = u.id
     ORDER BY p.name
@@ -737,7 +757,7 @@ app.get('/api/players', auth, (req, res) => {
     return {
       id: p.id, name: p.name, userId: p.userId ?? null,
       claimEmail: p.claimEmail ?? null,
-      avatarPath: p.avatarPath ?? null, xp: p.xp ?? 0,
+      avatarPath: p.avatarPath ?? null, venmoHandle: p.venmoHandle ?? null, xp: p.xp ?? 0,
       games: {
         items: gamePlayers.map((gp) => ({
           id: gp.id, buyIn: gp.buyIn, rebuys: gp.rebuys, cashOut: gp.cashOut,
@@ -830,9 +850,9 @@ app.get('/api/games', auth, (req, res) => {
   const games = db.prepare('SELECT * FROM games ORDER BY date DESC').all();
   const result = games.map((g) => {
     const players = db.prepare(`
-      SELECT gp.id, gp.buyIn, gp.rebuys, gp.cashOut, gp.timeIn, gp.timeOut,
+      SELECT gp.id, gp.buyIn, gp.rebuys, gp.cashOut, gp.timeIn, gp.timeOut, gp.venmoSettledAt,
              p.id as playerID, p.name as playerName,
-             u.avatarPath
+             u.avatarPath, u.venmoHandle
       FROM game_players gp
       JOIN players p ON gp.playerID = p.id
       LEFT JOIN users u ON p.userId = u.id
@@ -850,7 +870,8 @@ app.get('/api/games', auth, (req, res) => {
         items: players.map((gp) => ({
           id: gp.id, buyIn: gp.buyIn, rebuys: gp.rebuys, cashOut: gp.cashOut,
           timeIn: gp.timeIn ?? null, timeOut: gp.timeOut ?? null,
-          player: { id: gp.playerID, name: gp.playerName, avatarPath: gp.avatarPath ?? null },
+          venmoSettledAt: gp.venmoSettledAt ?? null,
+          player: { id: gp.playerID, name: gp.playerName, avatarPath: gp.avatarPath ?? null, venmoHandle: gp.venmoHandle ?? null },
         })),
       },
     };
@@ -1083,8 +1104,8 @@ app.put('/api/game-players/:id', auth, (req, res) => {
   const isLinkedPlayer = gp.linkedUserId && gp.linkedUserId === req.user.userId;
   const isGameOwner = gp.gameOwnerId && gp.gameOwnerId === req.user.userId;
 
-  // buy-in or cash-out changes: only admin, owner-role users, or the game owner
-  if ((req.body.buyIn !== undefined || req.body.cashOut !== undefined) && !isAdmin && !isOwnerRole && !isGameOwner) {
+  // buy-in, cash-out, or settlement changes: only admin, owner-role users, or the game owner
+  if ((req.body.buyIn !== undefined || req.body.cashOut !== undefined || req.body.venmoSettled !== undefined) && !isAdmin && !isOwnerRole && !isGameOwner) {
     return res.status(403).json({ error: 'Only the game owner or an admin can adjust buy-ins and cash-outs' });
   }
 
@@ -1114,6 +1135,11 @@ app.put('/api/game-players/:id', auth, (req, res) => {
     : (req.body.cashOut !== undefined && cashOut !== null && gp.timeOut == null
         ? new Date().toTimeString().slice(0, 5)
         : gp.timeOut);
+  // Undoing a cash-out voids any settlement recorded against it, same
+  // reasoning as clearing Time Out above.
+  const venmoSettledAt = clearsCashOut
+    ? null
+    : (req.body.venmoSettled !== undefined ? (req.body.venmoSettled ? new Date().toISOString() : null) : gp.venmoSettledAt);
   try {
     const row = db.prepare(
       'SELECT p.name FROM game_players gp JOIN players p ON gp.playerID = p.id WHERE gp.id = ?'
@@ -1134,9 +1160,9 @@ app.put('/api/game-players/:id', auth, (req, res) => {
       }
     }
   } catch (_e) {}
-  db.prepare('UPDATE game_players SET buyIn = ?, rebuys = ?, cashOut = ?, timeOut = ? WHERE id = ?')
-    .run(buyIn, rebuys, cashOut, timeOut, req.params.id);
-  res.json({ id: req.params.id, buyIn, rebuys, cashOut, timeOut });
+  db.prepare('UPDATE game_players SET buyIn = ?, rebuys = ?, cashOut = ?, timeOut = ?, venmoSettledAt = ? WHERE id = ?')
+    .run(buyIn, rebuys, cashOut, timeOut, venmoSettledAt, req.params.id);
+  res.json({ id: req.params.id, buyIn, rebuys, cashOut, timeOut, venmoSettledAt });
 });
 
 app.delete('/api/game-players/:id', auth, (req, res) => {

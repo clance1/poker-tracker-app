@@ -301,3 +301,60 @@ describe('game-players: mid-game cash-out', () => {
     assert.strictEqual(row.rebuys, 10);
   });
 });
+
+// venmoSettled: owner/admin can mark a player's net as manually settled
+// (Venmo or otherwise), following the same authorization rules as cashOut.
+describe('game-players: venmoSettled toggle', () => {
+  const setup = ({ ownerRole = 'owner' } = {}) => {
+    const owner = h.createUser({ role: ownerRole });
+    const player = h.createPlayer({});
+    const game = h.createGame({ ownerId: owner.id, isComplete: false });
+    const gp = h.createGamePlayer({ gameID: game.id, playerID: player.id, buyIn: 20, cashOut: 40 });
+    return { owner, player, game, gp };
+  };
+  const rowFor = (id) => db.prepare('SELECT venmoSettledAt FROM game_players WHERE id = ?').get(id);
+
+  test('owner marks settled -> venmoSettledAt is stamped and returned', async () => {
+    const { owner, gp } = setup();
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ venmoSettled: true });
+    assert.strictEqual(res.status, 200);
+    assert.ok(res.body.venmoSettledAt);
+    assert.strictEqual(rowFor(gp.id).venmoSettledAt, res.body.venmoSettledAt);
+  });
+
+  test('unmarking clears venmoSettledAt', async () => {
+    const { owner, gp } = setup();
+    await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ venmoSettled: true });
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ venmoSettled: false });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.venmoSettledAt, null);
+    assert.strictEqual(rowFor(gp.id).venmoSettledAt, null);
+  });
+
+  test('a bystander cannot toggle it -> 403', async () => {
+    const { gp } = setup();
+    const bystander = h.createUser({ role: 'user' });
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', bystander.cookie).send({ venmoSettled: true });
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(rowFor(gp.id).venmoSettledAt, null);
+  });
+
+  test('an admin (unrelated to the game) can toggle it', async () => {
+    const admin = h.createUser({ role: 'admin' });
+    const { gp } = setup();
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', admin.cookie).send({ venmoSettled: true });
+    assert.strictEqual(res.status, 200);
+    assert.ok(res.body.venmoSettledAt);
+  });
+
+  test('clearing the cash-out also clears any settlement recorded against it', async () => {
+    const { owner, gp } = setup();
+    await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ venmoSettled: true });
+    assert.ok(rowFor(gp.id).venmoSettledAt);
+
+    const res = await agent.put(`/api/game-players/${gp.id}`).set('Cookie', owner.cookie).send({ cashOut: null });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.venmoSettledAt, null);
+    assert.strictEqual(rowFor(gp.id).venmoSettledAt, null);
+  });
+});
