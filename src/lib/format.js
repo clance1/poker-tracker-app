@@ -62,6 +62,27 @@ export const calcStreak = (completedGames) => {
   return { count, type: firstType };
 };
 
+// All-time per-player summary for the profile hover card. Deliberately not
+// period-filtered (unlike Leaderboard's own playerStats memo, which needs
+// that) -- the hover card isn't scoped to whatever date range happens to be
+// selected on the Leaderboard tab, so it always shows the same numbers no
+// matter where it's opened from.
+export const computePlayerStats = (p) => {
+  const allDone = (p.games?.items ?? []).filter((gp) => gp.game?.isComplete);
+  const nets = allDone.map(calcNet);
+  const net = nets.reduce((s, n) => s + n, 0);
+  const wins = nets.filter((n) => n > 0).length;
+  return {
+    gamesPlayed: allDone.length,
+    wins,
+    losses: allDone.length - wins,
+    winRate: allDone.length ? wins / allDone.length : 0,
+    net,
+    xp: p.xp ?? 0,
+    streak: calcStreak(allDone),
+  };
+};
+
 export const nowTime = () => new Date().toTimeString().slice(0, 5);
 
 export const parseSteps = (raw) => {

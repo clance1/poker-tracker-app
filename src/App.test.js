@@ -9,6 +9,7 @@ import {
   calcNet,
   totalPot,
   buildVenmoLink,
+  computePlayerStats,
   calcStreak,
   parseSteps,
   parseHands,
@@ -340,6 +341,72 @@ describe("Helper Functions", () => {
       // So the streak starts with L and has count 1
       expect(result.type).toBe("L");
       expect(result.count).toBe(1);
+    });
+  });
+
+  // ── computePlayerStats tests ────────────────────────────────────
+  describe("computePlayerStats", () => {
+    test("zero games -> all zeros, no NaN/Infinity", () => {
+      const stats = computePlayerStats({ games: { items: [] }, xp: 0 });
+      expect(stats).toEqual({
+        gamesPlayed: 0, wins: 0, losses: 0, winRate: 0, net: 0, xp: 0,
+        streak: { count: 0, type: null },
+      });
+    });
+
+    test("missing games entirely -> treated as zero games", () => {
+      const stats = computePlayerStats({ xp: 10 });
+      expect(stats.gamesPlayed).toBe(0);
+      expect(stats.winRate).toBe(0);
+    });
+
+    test("counts wins/losses and computes net/winRate across completed games", () => {
+      const player = {
+        xp: 250,
+        games: {
+          items: [
+            { buyIn: 50, rebuys: 0, cashOut: 100, game: { id: "g1", date: "2024-01-01", isComplete: true } }, // +50 W
+            { buyIn: 50, rebuys: 0, cashOut: 20, game: { id: "g2", date: "2024-01-02", isComplete: true } },  // -30 L
+            { buyIn: 50, rebuys: 10, cashOut: 100, game: { id: "g3", date: "2024-01-03", isComplete: true } }, // +40 W
+          ],
+        },
+      };
+      const stats = computePlayerStats(player);
+      expect(stats.gamesPlayed).toBe(3);
+      expect(stats.wins).toBe(2);
+      expect(stats.losses).toBe(1);
+      expect(stats.winRate).toBeCloseTo(2 / 3);
+      expect(stats.net).toBe(60); // 50 - 30 + 40
+      expect(stats.xp).toBe(250);
+    });
+
+    test("excludes incomplete games from every stat", () => {
+      const player = {
+        xp: 0,
+        games: {
+          items: [
+            { buyIn: 50, rebuys: 0, cashOut: 100, game: { id: "g1", date: "2024-01-01", isComplete: true } },
+            { buyIn: 50, rebuys: 0, cashOut: 500, game: { id: "g2", date: "2024-01-02", isComplete: false } },
+          ],
+        },
+      };
+      const stats = computePlayerStats(player);
+      expect(stats.gamesPlayed).toBe(1);
+      expect(stats.net).toBe(50);
+    });
+
+    test("streak reflects the most recent completed games", () => {
+      const player = {
+        xp: 0,
+        games: {
+          items: [
+            { buyIn: 50, rebuys: 0, cashOut: 100, game: { id: "g1", date: "2024-01-01", isComplete: true } }, // W
+            { buyIn: 50, rebuys: 0, cashOut: 100, game: { id: "g2", date: "2024-01-02", isComplete: true } }, // W
+          ],
+        },
+      };
+      const stats = computePlayerStats(player);
+      expect(stats.streak).toEqual({ count: 2, type: "W" });
     });
   });
 

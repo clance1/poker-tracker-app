@@ -38,6 +38,7 @@ export {
   Plus,
   Minus,
   CurrencyDollar,
+  EnvelopeSimple,
 } from "@phosphor-icons/react";
 
 // Standard stroke weight for the whole app.

@@ -1,6 +1,8 @@
 import { useState, Fragment } from "react";
 import { apiFetch } from "../lib/api";
 import { sanitizeInput } from "../lib/format";
+import Avatar from "./Avatar";
+import PlayerHoverCard from "./PlayerHoverCard";
 import { Check, PencilSimple, X } from "./icons";
 
 // --- Players Tab ---
@@ -88,7 +90,10 @@ function PlayersTab({ players, onRefresh, isOwner, isAdmin }) {
               <Fragment key={p.id}>
                 <div className="player-row">
                   <div className="player-name-group">
-                    <span className="player-name-text">{p.name}</span>
+                    <PlayerHoverCard player={p}>
+                      <Avatar src={p.avatarPath} name={p.name} size={28} />
+                      <span className="player-name-text">{p.name}</span>
+                    </PlayerHoverCard>
                     {!isLinked && (
                       <span className="player-type-badge guest-badge" title="Guest, not linked to an app account">Guest</span>
                     )}

@@ -3,6 +3,7 @@ import { apiFetch, getStoredUsername } from "../lib/api";
 import { REBUY_DEFAULT, REBUY_PRESETS } from "../lib/constants";
 import { buildVenmoLink, fmt, fmtDate, nowTime, sanitizeInput, totalPot } from "../lib/format";
 import Avatar from "./Avatar";
+import PlayerHoverCard from "./PlayerHoverCard";
 import { ArrowLeft, Check, Clock, CurrencyDollar, FlagCheckered, MapPin, Play, Plus, User, X } from "./icons";
 
 // Pay/Request-via-Venmo affordance for a player who has cashed out, plus a
@@ -280,10 +281,12 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
           return (
             <div key={gp.id} className={"player-joker-card" + (isMe ? " player-joker-card-me" : "") + (net !== null && net > 0 ? " joker-winner" : net !== null && net < 0 ? " joker-loser" : "")}>
               <div className="joker-card-inner">
-                <div className="joker-avatar-wrap">
-                  <Avatar src={gp.player?.avatarPath} name={gp.player?.name} size={38} />
-                </div>
-                <div className="joker-player-name">{gp.player?.name ?? "?"}</div>
+                <PlayerHoverCard player={allPlayers.find((p) => p.id === gp.player?.id)} className="hover-card-trigger--column">
+                  <div className="joker-avatar-wrap">
+                    <Avatar src={gp.player?.avatarPath} name={gp.player?.name} size={38} />
+                  </div>
+                  <div className="joker-player-name">{gp.player?.name ?? "?"}</div>
+                </PlayerHoverCard>
                 <div className="joker-buy-in">
                   <span className="joker-stat-label">In</span>
                   <span className="joker-stat-val">{fmt(totalIn)}</span>
@@ -345,8 +348,10 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
             <React.Fragment key={gp.id}>
               <div className="table-row">
                 <span className="player-cell">
-                  <Avatar src={gp.player?.avatarPath} name={gp.player?.name} size={24} />
-                  {gp.player?.name ?? "?"}
+                  <PlayerHoverCard player={allPlayers.find((p) => p.id === gp.player?.id)}>
+                    <Avatar src={gp.player?.avatarPath} name={gp.player?.name} size={24} />
+                    {gp.player?.name ?? "?"}
+                  </PlayerHoverCard>
                   {hasCashedOut && (
                     <>
                       <span className="cashed-out-badge">Cashed Out</span>

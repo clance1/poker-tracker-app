@@ -44,6 +44,52 @@ describe('players: list shape', () => {
     assert.strictEqual(found.xp, 0);
     assert.deepStrictEqual(found.games.items, []);
   });
+
+  test('GET /api/players -> role is always included', async () => {
+    const owner = h.createUser({ role: 'owner' });
+    const linkedUser = h.createUser({ role: 'admin' });
+    const player = h.createPlayer({ userId: linkedUser.id, name: h.uniqueName('rolecheck') });
+    const res = await agent.get('/api/players').set('Cookie', owner.cookie);
+    const found = res.body.items.find((p) => p.id === player.id);
+    assert.strictEqual(found.role, 'admin');
+  });
+
+  // A user's real account email is otherwise admin-only (GET/PATCH /api/users).
+  // The profile hover-card shows it too, but the server must only include it
+  // in this list for owner/admin viewers -- everyone else must not receive
+  // the field at all, not just a hidden/null one.
+  describe('email visibility (owner/admin only)', () => {
+    const setup = async () => {
+      const linkedUser = h.createUser({ role: 'user' });
+      db.prepare('UPDATE users SET email = ? WHERE id = ?').run('linked@example.com', linkedUser.id);
+      const player = h.createPlayer({ userId: linkedUser.id, name: h.uniqueName('emailcheck') });
+      return { linkedUser, player };
+    };
+
+    test('owner viewer sees the real email', async () => {
+      const { player } = await setup();
+      const owner = h.createUser({ role: 'owner' });
+      const res = await agent.get('/api/players').set('Cookie', owner.cookie);
+      const found = res.body.items.find((p) => p.id === player.id);
+      assert.strictEqual(found.email, 'linked@example.com');
+    });
+
+    test('admin viewer sees the real email', async () => {
+      const { player } = await setup();
+      const admin = h.createUser({ role: 'admin' });
+      const res = await agent.get('/api/players').set('Cookie', admin.cookie);
+      const found = res.body.items.find((p) => p.id === player.id);
+      assert.strictEqual(found.email, 'linked@example.com');
+    });
+
+    test('plain user viewer never receives the email key at all', async () => {
+      const { player } = await setup();
+      const bystander = h.createUser({ role: 'user' });
+      const res = await agent.get('/api/players').set('Cookie', bystander.cookie);
+      const found = res.body.items.find((p) => p.id === player.id);
+      assert.strictEqual('email' in found, false, 'email key must be absent, not just null, for a non-privileged viewer');
+    });
+  });
 });
 
 describe('players: create (ownerAuth)', () => {

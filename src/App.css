@@ -101,10 +101,11 @@
   --shadow-lg: 0 12px 32px rgba(6, 10, 16, 0.55);
 
   /* Layer scale. Use these instead of a bare z-index. */
-  --z-raised:  2;
-  --z-sticky:  100;
-  --z-overlay: 200;
-  --z-toast:   300;
+  --z-raised:     2;
+  --z-sticky:     100;
+  --z-overlay:    200;
+  --z-toast:      300;
+  --z-hover-card: 400;
 }
 
 /* ─── Reset & Base ──────────────────────────────────────────────────────── */
@@ -2510,6 +2511,79 @@ a.venmo-btn { text-decoration: none; }
   white-space: nowrap;
 }
 .venmo-settle-toggle:hover { color: var(--text); border-color: var(--text-muted); }
+
+/* Profile hover card -- trigger is a real (inline-flex) box, not `display:
+   contents`, since mouseenter/mouseleave hit-testing on a contents element is
+   inconsistent across browsers. Modifiers let it match whatever flex layout
+   it's dropped into at each call site. */
+.hover-card-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  outline: none;
+}
+.hover-card-trigger--column {
+  flex-direction: column;
+  gap: 6px;
+}
+.hover-card-trigger--grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.hover-card-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-hover-card);
+}
+
+.player-hover-card {
+  position: fixed;
+  z-index: calc(var(--z-hover-card) + 1);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 12px 14px;
+  min-width: 220px;
+  max-width: 280px;
+}
+.hover-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hover-card-id { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.hover-card-name {
+  font-weight: 700;
+  font-size: var(--text-base);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hover-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.hover-card-stats > span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.hover-card-email {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  word-break: break-all;
+}
 
 /* Total pot + contribution row */
 .pot-contribution-row {

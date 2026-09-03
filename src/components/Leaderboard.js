@@ -3,6 +3,7 @@ import { apiFetch } from "../lib/api";
 import { getPlayerColor } from "../lib/constants";
 import { calcNet, calcStreak, fmt, fmtDateShort } from "../lib/format";
 import Avatar from "./Avatar";
+import PlayerHoverCard from "./PlayerHoverCard";
 import { CaretDown, CaretUp, CaretUpDown, Lightning, Medal, Trophy } from "./icons";
 
 const LeaderboardCharts = lazy(() => import("./LeaderboardCharts"));
@@ -203,20 +204,22 @@ function Leaderboard({ players }) {
               </div>
               <div className="lb-card-body">
                 <div className="lb-card-top">
-                  <Avatar src={p.avatarPath} name={p.name} size={28} />
-                  <span className="lb-card-name">
-                    {p.name}
-                    {badges.winner?.userId && p.userId === badges.winner.userId && (
-                      <span className="lb-badge lb-badge--crown" title={`Biggest winner last game${badges.winner.streak > 1 ? ` (${badges.winner.streak} in a row)` : ""}`}>
-                        👑{badges.winner.streak > 1 && <span className="lb-badge-streak"> x{badges.winner.streak}</span>}
-                      </span>
-                    )}
-                    {badges.loser?.userId && p.userId === badges.loser.userId && (
-                      <span className="lb-badge lb-badge--poop" title={`Biggest loser last game${badges.loser.streak > 1 ? ` (${badges.loser.streak} in a row)` : ""}`}>
-                        💩{badges.loser.streak > 1 && <span className="lb-badge-streak"> x{badges.loser.streak}</span>}
-                      </span>
-                    )}
-                  </span>
+                  <PlayerHoverCard player={players.find((pl) => pl.id === p.id)} className="hover-card-trigger--grow">
+                    <Avatar src={p.avatarPath} name={p.name} size={28} />
+                    <span className="lb-card-name">
+                      {p.name}
+                      {badges.winner?.userId && p.userId === badges.winner.userId && (
+                        <span className="lb-badge lb-badge--crown" title={`Biggest winner last game${badges.winner.streak > 1 ? ` (${badges.winner.streak} in a row)` : ""}`}>
+                          👑{badges.winner.streak > 1 && <span className="lb-badge-streak"> x{badges.winner.streak}</span>}
+                        </span>
+                      )}
+                      {badges.loser?.userId && p.userId === badges.loser.userId && (
+                        <span className="lb-badge lb-badge--poop" title={`Biggest loser last game${badges.loser.streak > 1 ? ` (${badges.loser.streak} in a row)` : ""}`}>
+                          💩{badges.loser.streak > 1 && <span className="lb-badge-streak"> x{badges.loser.streak}</span>}
+                        </span>
+                      )}
+                    </span>
+                  </PlayerHoverCard>
                   {streakLabel && (
                     <span className={"lb-streak " + streakCls} title={`${p.streak.count}-game ${p.streak.type === "W" ? "win" : "loss"} streak`}>
                       {p.streak.type === "W" ? "🔥" : "🧊"} {streakLabel}
@@ -318,8 +321,10 @@ function Leaderboard({ players }) {
                     : <span className="lb-rank-num">#{i + 1}</span>}
                 </div>
                 <div className="lb-other-identity">
-                  <Avatar src={p.avatarPath} name={p.name} size={28} />
-                  <span className="lb-card-name">{p.name}</span>
+                  <PlayerHoverCard player={players.find((pl) => pl.id === p.id)} className="hover-card-trigger--grow">
+                    <Avatar src={p.avatarPath} name={p.name} size={28} />
+                    <span className="lb-card-name">{p.name}</span>
+                  </PlayerHoverCard>
                 </div>
                 <div className="lb-other-xp">
                   <span className="lb-xp-value"><Lightning weight="fill" /> {p.xp.toLocaleString()}</span>

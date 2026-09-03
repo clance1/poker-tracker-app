@@ -740,8 +740,13 @@ app.patch('/api/users/:id', adminAuth, async (req, res) => {
 
 // --- Players ---
 app.get('/api/players', auth, (req, res) => {
+  // A user's real account email is otherwise admin-only (GET/PATCH /api/users).
+  // The profile hover-card shows it too, but only to owner/admin viewers -- the
+  // field is omitted from the payload entirely for anyone else, not just hidden
+  // client-side, so there's nothing for an unprivileged client to leak.
+  const canSeeEmail = req.user.role === 'owner' || req.user.role === 'admin';
   const players = db.prepare(`
-    SELECT p.id, p.name, p.userId, p.claimEmail, p.createdAt, u.avatarPath, u.venmoHandle, COALESCE(u.xp, 0) as xp
+    SELECT p.id, p.name, p.userId, p.claimEmail, p.createdAt, u.avatarPath, u.venmoHandle, u.email, u.role, COALESCE(u.xp, 0) as xp
     FROM players p
     LEFT JOIN users u ON p.userId = u.id
     ORDER BY p.name
@@ -758,6 +763,8 @@ app.get('/api/players', auth, (req, res) => {
       id: p.id, name: p.name, userId: p.userId ?? null,
       claimEmail: p.claimEmail ?? null,
       avatarPath: p.avatarPath ?? null, venmoHandle: p.venmoHandle ?? null, xp: p.xp ?? 0,
+      role: p.role ?? null,
+      ...(canSeeEmail ? { email: p.email ?? null } : {}),
       games: {
         items: gamePlayers.map((gp) => ({
           id: gp.id, buyIn: gp.buyIn, rebuys: gp.rebuys, cashOut: gp.cashOut,
