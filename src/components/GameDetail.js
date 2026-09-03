@@ -1,9 +1,46 @@
 import React, { useState, useEffect } from "react";
 import { apiFetch, getStoredUsername } from "../lib/api";
 import { REBUY_DEFAULT, REBUY_PRESETS } from "../lib/constants";
-import { fmt, fmtDate, nowTime, sanitizeInput, totalPot } from "../lib/format";
+import { buildVenmoLink, fmt, fmtDate, nowTime, sanitizeInput, totalPot } from "../lib/format";
 import Avatar from "./Avatar";
-import { ArrowLeft, Check, Clock, FlagCheckered, MapPin, Play, Plus, User, X } from "./icons";
+import { ArrowLeft, Check, Clock, CurrencyDollar, FlagCheckered, MapPin, Play, Plus, User, X } from "./icons";
+
+// Pay/Request-via-Venmo affordance for a player who has cashed out, plus a
+// manual "Mark Settled" toggle (Venmo isn't required to record a settlement --
+// cash and other apps count too). Shared between the joker card and the
+// players table so the two views never drift.
+function VenmoAction({ gp, net, gameDate, onToggleSettled }) {
+  if (net === null || Math.abs(net) < 0.01) return null; // nothing owed either direction
+
+  if (gp.venmoSettledAt) {
+    return (
+      <button type="button" className="venmo-btn venmo-settled"
+        onClick={() => onToggleSettled(gp, false)} title="Marked settled — click to undo">
+        <Check /> Settled
+      </button>
+    );
+  }
+
+  const link = buildVenmoLink(gp.player?.venmoHandle, net, `Poker ${fmtDate(gameDate)}`);
+  return (
+    <span className="venmo-action">
+      {link ? (
+        <a className={"venmo-btn " + (net > 0 ? "venmo-btn-pay" : "venmo-btn-request")}
+          href={link} target="_blank" rel="noopener noreferrer"
+          title={(net > 0 ? "Pay " : "Request ") + fmt(Math.abs(net)) + " via Venmo"}>
+          <CurrencyDollar /> {net > 0 ? "Pay" : "Request"} {fmt(Math.abs(net))}
+        </a>
+      ) : (
+        <span className="venmo-btn venmo-btn-disabled" title={`${gp.player?.name ?? "Player"} hasn't added a Venmo handle`}>
+          <CurrencyDollar /> No Venmo
+        </span>
+      )}
+      <button type="button" className="venmo-settle-toggle" onClick={() => onToggleSettled(gp, true)}>
+        Mark Settled
+      </button>
+    </span>
+  );
+}
 
 // --- Game Detail ---
 function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
@@ -88,7 +125,7 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
         body: { gameID: game.id, playerID: addPlayerID, buyIn, rebuys: 0 },
       });
       const player = allPlayers.find((p) => p.id === addPlayerID);
-      setGamePlayers((prev) => [...prev, { ...gp, timeIn: gp.timeIn ?? null, timeOut: null, player: { id: addPlayerID, name: player?.name ?? "" } }]);
+      setGamePlayers((prev) => [...prev, { ...gp, timeIn: gp.timeIn ?? null, timeOut: null, venmoSettledAt: null, player: { id: addPlayerID, name: player?.name ?? "", avatarPath: player?.avatarPath ?? null, venmoHandle: player?.venmoHandle ?? null } }]);
       setAddPlayerID(""); setAddBuyIn("20"); setAddPlayerOpen(false);
     } catch (e) {
       let msg = e.message;
@@ -141,6 +178,17 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
       setCashOuts((prev) => ({ ...prev, [gp.id]: saved === null ? "" : String(saved) }));
     }
     setCashOutSaving((prev) => ({ ...prev, [gp.id]: false }));
+  };
+
+  const toggleVenmoSettled = async (gp, next) => {
+    try {
+      const res = await apiFetch("/api/game-players/" + gp.id, { method: "PUT", body: { venmoSettled: next } });
+      setGamePlayers((prev) => prev.map((p) => (p.id === gp.id ? { ...p, venmoSettledAt: res.venmoSettledAt } : p)));
+    } catch (e) {
+      let msg = e.message;
+      try { msg = JSON.parse(e.message).error || msg; } catch {}
+      alert(msg);
+    }
   };
 
   const handleRemovePlayer = async (gp) => {
@@ -219,6 +267,11 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
       <div className="player-cards-strip">
         {gamePlayers.map((gp) => {
           const totalIn = gp.buyIn + (gp.rebuys ?? 0);
+          // Server truth, same as the table row -- gates the Venmo action on an
+          // actually-recorded cash-out rather than an unsaved typed draft.
+          const savedCashOut = gp.cashOut ?? null;
+          const hasCashedOut = savedCashOut !== null;
+          const savedNet = hasCashedOut ? savedCashOut - totalIn : null;
           const co = game.isComplete
             ? (gp.cashOut ?? 0)
             : (parseFloat(cashOuts[gp.id] ?? "") || null);
@@ -235,10 +288,13 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
                   <span className="joker-stat-label">In</span>
                   <span className="joker-stat-val">{fmt(totalIn)}</span>
                 </div>
-                {game.isComplete && net !== null ? (
+                {(game.isComplete || hasCashedOut) && net !== null ? (
                   <div className={"joker-result " + (net >= 0 ? "joker-profit" : "joker-loss")}>
                     <div className="joker-cashout">{fmt(co)}</div>
                     <div className="joker-net">{net >= 0 ? "+" : ""}{fmt(net)}</div>
+                    {canManageCashOuts && !isMe && (
+                      <VenmoAction gp={gp} net={savedNet} gameDate={game.date} onToggleSettled={toggleVenmoSettled} />
+                    )}
                   </div>
                 ) : !game.isComplete && (
                   gp.timeIn
@@ -284,6 +340,7 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
           const co = game.isComplete ? gp.cashOut ?? 0 : (typed === "" ? null : parseFloat(typed));
           const net = co !== null && !isNaN(co) ? co - totalIn : null;
           const isRebuyOpen = rebuyOpen === gp.id;
+          const isMe = gp.player?.name?.toLowerCase() === currentUsername?.toLowerCase();
           return (
             <React.Fragment key={gp.id}>
               <div className="table-row">
@@ -296,6 +353,9 @@ function GameDetail({ game, onBack, onRefresh, isOwner, isAdmin, allPlayers }) {
                       <span className={savedNet > 0 ? "net-positive" : savedNet < 0 ? "net-negative" : "net-zero"}>
                         {savedNet >= 0 ? "+" : ""}{fmt(savedNet)}
                       </span>
+                      {canManageCashOuts && !isMe && (
+                        <VenmoAction gp={gp} net={savedNet} gameDate={game.date} onToggleSettled={toggleVenmoSettled} />
+                      )}
                     </>
                   )}
                 </span>
