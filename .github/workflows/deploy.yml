@@ -51,6 +51,10 @@ jobs:
   deploy:
     needs: validate
     runs-on: [self-hosted, Windows, X64, poker-production]
+    defaults:
+      run:
+        # Avoid C:\Windows\System32\bash.exe (the WSL launcher).
+        shell: '"C:\Program Files\Git\bin\bash.exe" --noprofile --norc -eo pipefail {0}'
     timeout-minutes: 20
     permissions:
       contents: read
@@ -78,4 +82,4 @@ jobs:
           export DOCKER_CONFIG="$(cygpath -w "$credentials")"
           trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          bash scripts/deploy-production.sh
+          "$BASH" scripts/deploy-production.sh

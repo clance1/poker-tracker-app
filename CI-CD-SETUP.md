@@ -55,7 +55,9 @@ curl --version
 
 The first command should report `linux`. Use a recent Git for Windows (including
 curl with `--retry-all-errors`) and current Docker Compose. All pipeline command
-steps use Bash; GitHub uses Git for Windows' Bash for Windows jobs with that shell.
+steps use Bash. The Windows deployment job explicitly uses
+`C:\Program Files\Git\bin\bash.exe` so it cannot select Windows' WSL launcher.
+If Git is installed elsewhere, update the deployment job's `defaults.run.shell`.
 [GitHub shell reference](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)
 
 ## 3. Register the deployment runner
