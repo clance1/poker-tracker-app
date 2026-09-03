@@ -1,0 +1,81 @@
+name: Deploy production
+on:
+  workflow_dispatch:
+    inputs:
+      release_run:
+        description: Successful main CI run ID (from its summary or URL)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: poker-production
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      packages: read
+      contents: read
+    outputs:
+      image: ${{ steps.release.outputs.image }}
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - name: Verify selected release before contacting the local runner
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN: ${{ inputs.release_run }}
+        run: |
+          [[ "$RELEASE_RUN" =~ ^[0-9]+$ ]] || exit 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN" > run.json
+          jq -e --arg repo "$GITHUB_REPOSITORY" \
+            '.conclusion == "success" and .event == "push" and .head_branch == "main"
+             and .path == ".github/workflows/ci.yml" and .repository.full_name == $repo
+             and .head_repository.full_name == $repo' run.json >/dev/null
+          commit="$(jq -r .head_sha run.json)"
+          attempt="$(jq -r .run_attempt run.json)"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:run-${RELEASE_RUN}-${attempt}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker pull "$image"
+          [[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" == "$commit" ]]
+          digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$image")"
+          [[ "$digest" == "ghcr.io/${GITHUB_REPOSITORY,,}@sha256:"* ]] || exit 1
+          printf 'image=%s\ncommit=%s\n' "$digest" "$commit" >> "$GITHUB_OUTPUT"
+          docker logout ghcr.io
+  deploy:
+    needs: validate
+    runs-on: [self-hosted, Windows, X64, poker-production]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Back up and deploy on Docker Desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_IMAGE: ${{ needs.validate.outputs.image }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          PROD_DIR: ${{ vars.PROD_DIR }}
+          PROD_PROJECT: ${{ vars.PROD_PROJECT }}
+          PROD_BACKUP_DIR: ${{ vars.PROD_BACKUP_DIR }}
+          PROD_HEALTH_URL: ${{ vars.PROD_HEALTH_URL }}
+        run: |
+          export MSYS_NO_PATHCONV=1
+          export PATH="/usr/bin:/bin:$PATH"
+          # Temporary registry credentials; preserve the user's Docker config.
+          export DOCKER_HOST="$(docker context inspect --format '{{.Endpoints.docker.Host}}')"
+          unset DOCKER_CONTEXT
+          credentials="$(mktemp -d)"
+          export DOCKER_CONFIG="$(cygpath -w "$credentials")"
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          bash scripts/deploy-production.sh

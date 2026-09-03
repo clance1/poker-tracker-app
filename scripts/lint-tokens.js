@@ -25,7 +25,15 @@ const RUNTIME_TOKENS = new Set([
   "--stagger-index",  // JokerCard: grid position, drives reveal delay
 ]);
 
-const css = fs.readFileSync(CSS, "utf8");
+// Normalize CRLF -> LF up front. On a Windows checkout with core.autocrlf=true,
+// every file on disk has \r\n even though the committed blobs are LF-only; the
+// per-line comment stripping below is anchored with `$`, which (unlike a bare
+// end-of-string check) does not consider `\r` matched by `.` -- so a trailing
+// \r silently defeated the strip and produced false-positive "undefined
+// token" errors for anything resembling var(--x) inside a // comment.
+const readNormalized = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+
+const css = readNormalized(CSS);
 
 // Definitions from the :root block only. A token defined ad hoc deeper in the
 // stylesheet does not count: it would not be in scope for every consumer.
@@ -57,7 +65,7 @@ const problems = [];
 
 for (const file of files) {
   const rel = path.relative(ROOT, file).split(path.sep).join("/");
-  stripComments(fs.readFileSync(file, "utf8")).split("\n").forEach((line, i) => {
+  stripComments(readNormalized(file)).split("\n").forEach((line, i) => {
     for (const m of line.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)\s*([,)])/g)) {
       const [, token, next] = m;
       if (defined.has(token) || RUNTIME_TOKENS.has(token)) continue;
@@ -93,7 +101,7 @@ stripComments(css)
 const classProblems = [];
 for (const file of files.filter((f) => /\.(js|jsx)$/.test(f))) {
   const rel = path.relative(ROOT, file).split(path.sep).join("/");
-  stripComments(fs.readFileSync(file, "utf8")).split("\n").forEach((line, i) => {
+  stripComments(readNormalized(file)).split("\n").forEach((line, i) => {
     for (const attr of line.matchAll(/className=(?:"([^"]*)"|\{([^}]*)\})/g)) {
       // Only literal strings. Inside an expression, read the quoted segments,
       // after dropping comparison operands (`view === "game"`) and lookup keys
