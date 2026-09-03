@@ -2458,6 +2458,59 @@ body {
   color: var(--text-muted);
 }
 
+/* Venmo Pay/Request + settle toggle -- shown next to a cashed-out player,
+   in both the joker card (stacked, via .joker-result's flex-column) and the
+   players-table row (inline, via .player-cell's flex-wrap). */
+.venmo-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.venmo-btn {
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+a.venmo-btn { text-decoration: none; }
+.venmo-btn-pay {
+  color: var(--profit);
+  background: rgba(63, 185, 80, 0.15);
+  border-color: rgba(63, 185, 80, 0.3);
+}
+.venmo-btn-pay:hover { background: rgba(63, 185, 80, 0.25); }
+.venmo-btn-request {
+  color: var(--loss);
+  background: rgba(248, 81, 73, 0.12);
+  border-color: rgba(248, 81, 73, 0.3);
+}
+.venmo-btn-request:hover { background: rgba(248, 81, 73, 0.2); }
+.venmo-btn-disabled {
+  color: var(--text-muted);
+  background: rgba(148,163,184,0.12);
+  border-color: rgba(148,163,184,0.25);
+}
+.venmo-btn.venmo-settled {
+  color: var(--profit);
+  background: rgba(63, 185, 80, 0.15);
+  border-color: rgba(63, 185, 80, 0.3);
+}
+.venmo-settle-toggle {
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.venmo-settle-toggle:hover { color: var(--text); border-color: var(--text-muted); }
+
 /* Total pot + contribution row */
 .pot-contribution-row {
   display: flex;
@@ -3626,7 +3679,7 @@ body {
 .rule-card-cta, .lb-xp-badge, .lb-ach-badge, .lb-xp-value, .profile-xp-badge,
 .game-meta-item, .game-card-meta, .scheduled-game-location,
 .joker-live-badge, .joker-earned-date, .pot-diff, .version-chevron,
-.xp-history-total, .tg-help span {
+.xp-history-total, .tg-help span, .venmo-btn, .venmo-settle-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;

@@ -277,3 +277,39 @@ describe('auth middleware: DB is authoritative over stale JWT claims', () => {
     assert.ok(loginRes.headers['set-cookie']?.some((c) => c.startsWith('auth_token=')));
   });
 });
+
+describe('PATCH /api/profile: venmoHandle', () => {
+  test('valid handle -> 200, round-trips through GET /api/profile', async () => {
+    const u = h.createUser({ role: 'user' });
+    const res = await agent.patch('/api/profile').set('Cookie', u.cookie).send({ venmoHandle: 'john-doe-42' });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.venmoHandle, 'john-doe-42');
+
+    const fetched = await agent.get('/api/profile').set('Cookie', u.cookie);
+    assert.strictEqual(fetched.body.venmoHandle, 'john-doe-42');
+  });
+
+  test('leading "@" is stripped', async () => {
+    const u = h.createUser({ role: 'user' });
+    const res = await agent.patch('/api/profile').set('Cookie', u.cookie).send({ venmoHandle: '@john-doe-42' });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.venmoHandle, 'john-doe-42');
+  });
+
+  test('too short, too long, and invalid characters -> 400', async () => {
+    const u = h.createUser({ role: 'user' });
+    for (const bad of ['ab', 'x'.repeat(31), 'john doe!']) {
+      const res = await agent.patch('/api/profile').set('Cookie', u.cookie).send({ venmoHandle: bad });
+      assert.strictEqual(res.status, 400, `expected 400 for ${JSON.stringify(bad)}`);
+      assert.match(res.body.error, /5-30 letters, numbers, underscores, or hyphens/);
+    }
+  });
+
+  test('empty string clears an existing handle', async () => {
+    const u = h.createUser({ role: 'user' });
+    await agent.patch('/api/profile').set('Cookie', u.cookie).send({ venmoHandle: 'john-doe-42' });
+    const res = await agent.patch('/api/profile').set('Cookie', u.cookie).send({ venmoHandle: '' });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.venmoHandle, null);
+  });
+});

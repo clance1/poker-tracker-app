@@ -334,4 +334,11 @@ addCol('game_players', 'timeOut', 'TEXT');
 // inserted game_players rows get an immediate timeIn.
 addCol('games', 'timerStarted', 'INTEGER NOT NULL DEFAULT 0');
 
+// users: Venmo handle for in-app Pay/Request deep links (see PATCH /api/profile).
+addCol('users', 'venmoHandle', 'TEXT');
+
+// game_players: when the owner has manually marked this player's net as
+// settled (paid/requested, via Venmo or otherwise). null = not settled.
+addCol('game_players', 'venmoSettledAt', 'TEXT');
+
 module.exports = db;

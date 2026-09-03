@@ -8,6 +8,7 @@ import {
   nowTime,
   calcNet,
   totalPot,
+  buildVenmoLink,
   calcStreak,
   parseSteps,
   parseHands,
@@ -196,6 +197,55 @@ describe("Helper Functions", () => {
     test("can return negative (loss)", () => {
       const gp = { cashOut: 0, buyIn: 100, rebuys: 50 };
       expect(calcNet(gp)).toBe(-150); // 0 - 100 - 50
+    });
+  });
+
+  // ── buildVenmoLink tests ──────────────────────────────────────────
+  describe("buildVenmoLink", () => {
+    test("positive net -> txn=pay, amount is the raw decimal (no $)", () => {
+      const url = new URL(buildVenmoLink("john-doe-42", 20, "Poker"));
+      expect(url.origin + url.pathname).toBe("https://venmo.com/");
+      expect(url.searchParams.get("txn")).toBe("pay");
+      expect(url.searchParams.get("amount")).toBe("20.00");
+      expect(url.searchParams.get("recipients")).toBe("john-doe-42");
+    });
+
+    test("negative net -> txn=charge, amount is the absolute value", () => {
+      const url = new URL(buildVenmoLink("john-doe-42", -20, "Poker"));
+      expect(url.searchParams.get("txn")).toBe("charge");
+      expect(url.searchParams.get("amount")).toBe("20.00");
+    });
+
+    test("net within a cent of zero -> null (nothing owed)", () => {
+      expect(buildVenmoLink("john-doe-42", 0, "Poker")).toBeNull();
+      expect(buildVenmoLink("john-doe-42", 0.009, "Poker")).toBeNull();
+      expect(buildVenmoLink("john-doe-42", -0.009, "Poker")).toBeNull();
+    });
+
+    test("missing handle -> null regardless of net", () => {
+      expect(buildVenmoLink(null, 20, "Poker")).toBeNull();
+      expect(buildVenmoLink("", 20, "Poker")).toBeNull();
+      expect(buildVenmoLink(undefined, -20, "Poker")).toBeNull();
+    });
+
+    test("null/undefined net -> null", () => {
+      expect(buildVenmoLink("john-doe-42", null, "Poker")).toBeNull();
+      expect(buildVenmoLink("john-doe-42", undefined, "Poker")).toBeNull();
+    });
+
+    test("note is passed through and URL-encoded", () => {
+      const url = new URL(buildVenmoLink("john-doe-42", 20, "Poker Tue Jan 6"));
+      expect(url.searchParams.get("note")).toBe("Poker Tue Jan 6");
+    });
+
+    test("defaults the note to 'Poker' when omitted", () => {
+      const url = new URL(buildVenmoLink("john-doe-42", 20));
+      expect(url.searchParams.get("note")).toBe("Poker");
+    });
+
+    test("audience is always private", () => {
+      const url = new URL(buildVenmoLink("john-doe-42", 20, "Poker"));
+      expect(url.searchParams.get("audience")).toBe("private");
     });
   });
 

@@ -37,6 +37,7 @@ export {
   Sparkle,
   Plus,
   Minus,
+  CurrencyDollar,
 } from "@phosphor-icons/react";
 
 // Standard stroke weight for the whole app.

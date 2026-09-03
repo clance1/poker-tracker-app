@@ -26,6 +26,24 @@ export const todayISO = () => new Date().toISOString().split("T")[0];
 export const calcNet = (gp) => (gp.cashOut ?? 0) - gp.buyIn - (gp.rebuys ?? 0);
 export const totalPot = (gps) => gps.reduce((s, gp) => s + gp.buyIn + (gp.rebuys ?? 0), 0);
 
+// Venmo's public, unauthenticated web deep link -- opens the caller's own
+// already-signed-in Venmo session with the transaction prefilled, and lets
+// them review/submit. No OAuth, no server-side money movement. This format is
+// undocumented and Venmo could change it without notice; this function is the
+// single place that would need updating if so.
+const VENMO_NET_EPSILON = 0.01; // matches the potDiff-balanced check in GameDetail
+export const buildVenmoLink = (venmoHandle, net, note) => {
+  if (!venmoHandle || net === null || net === undefined || Math.abs(net) < VENMO_NET_EPSILON) return null;
+  const params = new URLSearchParams({
+    txn: net > 0 ? "pay" : "charge",
+    audience: "private",
+    recipients: venmoHandle,
+    amount: Math.abs(net).toFixed(2), // raw decimal, not fmt()'s "$" display string
+    note: note || "Poker",
+  });
+  return `https://venmo.com/?${params.toString()}`;
+};
+
 export const fmtDateShort = (dateStr) => {
   if (!dateStr) return "";
   return new Date(dateStr + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });

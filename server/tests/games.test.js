@@ -42,6 +42,27 @@ describe('games: list shape', () => {
     assert.ok(found);
     assert.strictEqual(found.owner, null);
   });
+
+  test('GET /api/games -> players.items[].player.venmoHandle and .venmoSettledAt flow through from users/game_players', async () => {
+    const owner = h.createUser({ role: 'owner' });
+    const linkedUser = h.createUser({ role: 'user' });
+    db.prepare('UPDATE users SET venmoHandle = ? WHERE id = ?').run('with-venmo-99', linkedUser.id);
+    const withHandle = h.createPlayer({ userId: linkedUser.id, name: h.uniqueName('venmo-yes') });
+    const withoutHandle = h.createPlayer({ name: h.uniqueName('venmo-no') });
+    const game = h.createGame({ ownerId: owner.id });
+    const gp1 = h.createGamePlayer({ gameID: game.id, playerID: withHandle.id, buyIn: 20, cashOut: 40 });
+    h.createGamePlayer({ gameID: game.id, playerID: withoutHandle.id, buyIn: 20, cashOut: 0 });
+    db.prepare('UPDATE game_players SET venmoSettledAt = ? WHERE id = ?').run('2026-01-01T00:00:00.000Z', gp1.id);
+
+    const res = await agent.get('/api/games').set('Cookie', owner.cookie);
+    const found = res.body.items.find((g) => g.id === game.id);
+    const row1 = found.players.items.find((p) => p.player.id === withHandle.id);
+    const row2 = found.players.items.find((p) => p.player.id === withoutHandle.id);
+    assert.strictEqual(row1.player.venmoHandle, 'with-venmo-99');
+    assert.strictEqual(row1.venmoSettledAt, '2026-01-01T00:00:00.000Z');
+    assert.strictEqual(row2.player.venmoHandle, null);
+    assert.strictEqual(row2.venmoSettledAt, null);
+  });
 });
 
 describe('games: create (ownerAuth)', () => {
